@@ -68,9 +68,24 @@ export function Field({ label, hint, children, full }) {
   );
 }
 
-export function FileDrop({ file, onChange, label = 'Upload scan dokumen' }) {
+// Foto dari kamera HP biasanya besar: perkecil otomatis agar < 4 MB
+async function compressImage(file) {
+  if (!/^image\/(jpeg|png|webp|heic)/.test(file.type) || file.size < 1.5 * 1024 * 1024) return file;
+  try {
+    const img = await createImageBitmap(file);
+    const scale = Math.min(1, 2200 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+    return blob ? new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file;
+  } catch { return file; }
+}
+
+export function FileDrop({ file, onChange: setFile, label = 'Upload scan dokumen' }) {
   const ref = useRef();
   const [over, setOver] = useState(false);
+  const onChange = async (f) => setFile(await compressImage(f));
   return (
     <div
       className={`drop ${over ? 'over' : ''}`}
@@ -81,7 +96,7 @@ export function FileDrop({ file, onChange, label = 'Upload scan dokumen' }) {
     >
       <FileUp size={26} />
       <strong>{file ? file.name : label}</strong>
-      <span className="small">{file ? `${(file.size / 1024).toFixed(0)} KB — klik untuk ganti` : 'Klik / seret file ke sini, atau ambil foto. JPG, PNG, PDF maks 10 MB'}</span>
+      <span className="small">{file ? `${(file.size / 1024).toFixed(0)} KB — klik untuk ganti` : 'Klik / seret file ke sini, atau ambil foto. JPG, PNG, PDF maks 4 MB (foto diperkecil otomatis)'}</span>
       <input ref={ref} type="file" accept="image/*,application/pdf" hidden onChange={(e) => e.target.files[0] && onChange(e.target.files[0])} />
     </div>
   );
