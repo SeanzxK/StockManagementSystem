@@ -7,7 +7,7 @@ const { sign, setCookie, requireAuth, requireRole, COOKIE } = require('./auth');
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (/^image\//.test(file.mimetype) || file.mimetype === 'application/pdf') cb(null, true);
     else cb(new HttpError(400, 'File harus berupa gambar (JPG/PNG) atau PDF'));
@@ -667,7 +667,7 @@ router.get('/dashboard', h(async (req, res) => {
 
 // ---------- error handler ----------
 router.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file maksimal 10 MB' : err.message });
+  if (err instanceof multer.MulterError) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Ukuran file maksimal 4 MB' : err.message });
   if (err.status) return res.status(err.status).json({ error: err.message });
   console.error(err);
   res.status(500).json({ error: 'Terjadi kesalahan pada server' });

@@ -159,6 +159,10 @@ CREATE TABLE IF NOT EXISTS notification_reads (
   user_id INTEGER NOT NULL,
   PRIMARY KEY (notification_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS app_secrets (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
@@ -243,6 +247,11 @@ async function migrate() {
     tax_rate: '11',
     invoice_due_days: '30',
   };
+  // Secret JWT: pakai env bila ada, kalau tidak buat acak sekali & simpan di DB
+  await db.execute({ sql: 'INSERT OR IGNORE INTO app_secrets (key, value) VALUES (?, ?)', args: ['jwt_secret', require('crypto').randomBytes(48).toString('hex')] });
+  const sec = await db.execute("SELECT value FROM app_secrets WHERE key='jwt_secret'");
+  require('./auth').setSecret(String(sec.rows[0][0]));
+
   for (const [k, v] of Object.entries(defaults)) {
     await db.execute({ sql: 'INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)', args: [k, v] });
   }

@@ -1,6 +1,8 @@
 const jwt = require('jsonwebtoken');
 
-const SECRET = process.env.JWT_SECRET || 'ganti-secret-ini-di-production';
+// JWT_SECRET dari environment; jika tidak diisi, dibuat acak & disimpan di database (lihat db.js)
+let SECRET = process.env.JWT_SECRET || null;
+const setSecret = (s) => { if (!process.env.JWT_SECRET) SECRET = s; };
 const COOKIE = 'isms_token';
 
 function sign(user) {
@@ -32,4 +34,4 @@ const requireRole = (...roles) => (req, res, next) => {
   next();
 };
 
-module.exports = { sign, setCookie, requireAuth, requireRole, COOKIE };
+module.exports = { sign, setCookie, requireAuth, requireRole, COOKIE, setSecret };
