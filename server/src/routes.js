@@ -82,9 +82,9 @@ async function balance(ex, location, { productId, poItemId }) {
 
 async function poItemsProgress(ex, poId) {
   return all(`
-    SELECT pi.*, p.code AS product_code, p.name AS product_name, p.flute, p.substance, p.price_m2, p.unit,
-      COALESCE((SELECT SUM(bi.qty) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE bi.po_item_id=pi.id AND b.type='WH_PROD'),0) AS qty_produced,
-      COALESCE((SELECT SUM(bi.qty) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE bi.po_item_id=pi.id AND b.type='PROD_DEL'),0) AS qty_to_delivery,
+    SELECT pi.*, p.code AS product_code, p.name AS product_name, p.flute, p.substance, p.price_m2, p.unit, p.category,
+      COALESCE((SELECT SUM(bi.qty) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE bi.po_item_id=pi.id AND b.type IN ('WH_PROD','WH_DEL')),0) AS qty_produced,
+      COALESCE((SELECT SUM(bi.qty) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE bi.po_item_id=pi.id AND b.type IN ('PROD_DEL','WH_DEL')),0) AS qty_to_delivery,
       COALESCE((SELECT SUM(qty) FROM stock_ledger WHERE location='production' AND po_item_id=pi.id),0) AS stock_production,
       COALESCE((SELECT SUM(qty) FROM stock_ledger WHERE location='delivery' AND po_item_id=pi.id),0) AS stock_delivery,
       COALESCE((SELECT SUM(qty) FROM stock_ledger WHERE location='delivered' AND po_item_id=pi.id),0) AS qty_delivered
@@ -165,35 +165,39 @@ router.put('/users/:id', requireRole('admin'), h(async (req, res) => {
 
 // ---------- settings ----------
 router.get('/settings', h(async (req, res) => {
-  const rows = await all('SELECT key, value FROM settings');
-  res.json(Object.fromEntries(rows.map((r) => [r.key, r.value])));
+  res.json(await getSettings());
 }));
 router.put('/settings', requireRole('admin'), h(async (req, res) => {
+  const stmts = [];
   for (const [k, v] of Object.entries(req.body || {})) {
-    await run('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [k, str(v)]);
+    if (k === 'schema_version') continue;
+    const val = typeof v === 'object' && v !== null ? JSON.stringify(v) : str(v);
+    stmts.push({ sql: 'INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', args: [k, val] });
   }
+  if (stmts.length) await db.batch(stmts, 'write');
   res.json({ ok: true });
 }));
 
 // ---------- products ----------
 router.get('/products', h(async (req, res) => {
   res.json(await all(`SELECT p.*, COALESCE((SELECT SUM(qty) FROM stock_ledger l WHERE l.location='warehouse' AND l.product_id=p.id),0) AS stock
-    FROM products p ORDER BY CASE p.flute WHEN 'B' THEN 1 WHEN 'C' THEN 2 ELSE 3 END, p.code`));
+    FROM products p ORDER BY CASE p.category WHEN 'sheet' THEN 0 ELSE 1 END, CASE p.flute WHEN 'B' THEN 1 WHEN 'C' THEN 2 ELSE 3 END, p.code`));
 }));
 router.post('/products', requireRole('admin', 'warehouse'), h(async (req, res) => {
-  const { code, name, flute, substance, price_m2, unit, min_stock } = req.body || {};
+  const { code, name, flute, substance, price_m2, unit, min_stock, category } = req.body || {};
   if (!str(code) || !str(name) || !str(flute) || !str(substance)) throw new HttpError(400, 'Kode, nama, flute dan substance wajib diisi');
   if (await one('SELECT id FROM products WHERE code=?', [str(code)])) throw new HttpError(400, 'Kode barang sudah ada');
-  const r = await run('INSERT INTO products (code, name, flute, substance, price_m2, unit, min_stock) VALUES (?,?,?,?,?,?,?)',
-    [str(code), str(name), str(flute), str(substance), Number(price_m2) || 0, str(unit) || 'lembar', int(min_stock)]);
+  const cat = category === 'box' ? 'box' : 'sheet';
+  const r = await run('INSERT INTO products (code, name, flute, substance, price_m2, unit, min_stock, category) VALUES (?,?,?,?,?,?,?,?)',
+    [str(code), str(name), str(flute), str(substance), Number(price_m2) || 0, str(unit) || (cat === 'box' ? 'pcs' : 'lembar'), int(min_stock), cat]);
   res.json({ id: r.id });
 }));
 router.put('/products/:id', requireRole('admin', 'warehouse'), h(async (req, res) => {
   const p = await one('SELECT * FROM products WHERE id=?', [int(req.params.id)]);
   if (!p) throw new HttpError(404, 'Barang tidak ditemukan');
   const b = { ...p, ...req.body };
-  await run('UPDATE products SET name=?, flute=?, substance=?, price_m2=?, unit=?, min_stock=?, active=? WHERE id=?',
-    [str(b.name), str(b.flute), str(b.substance), Number(b.price_m2) || 0, str(b.unit) || 'lembar', int(b.min_stock), b.active ? 1 : 0, p.id]);
+  await run('UPDATE products SET name=?, flute=?, substance=?, price_m2=?, unit=?, min_stock=?, active=?, category=? WHERE id=?',
+    [str(b.name), str(b.flute), str(b.substance), Number(b.price_m2) || 0, str(b.unit) || 'lembar', int(b.min_stock), b.active ? 1 : 0, b.category === 'box' ? 'box' : 'sheet', p.id]);
   res.json({ ok: true });
 }));
 
@@ -201,7 +205,7 @@ router.put('/products/:id', requireRole('admin', 'warehouse'), h(async (req, res
 router.get('/stock/warehouse', h(async (req, res) => {
   res.json(await all(`SELECT p.*, COALESCE(SUM(l.qty),0) AS stock
     FROM products p LEFT JOIN stock_ledger l ON l.product_id=p.id AND l.location='warehouse'
-    GROUP BY p.id ORDER BY CASE p.flute WHEN 'B' THEN 1 WHEN 'C' THEN 2 ELSE 3 END, p.code`));
+    GROUP BY p.id ORDER BY CASE p.category WHEN 'sheet' THEN 0 ELSE 1 END, CASE p.flute WHEN 'B' THEN 1 WHEN 'C' THEN 2 ELSE 3 END, p.code`));
 }));
 
 async function stockByPoItem(location) {
@@ -255,9 +259,11 @@ router.post('/stock/warehouse/:dir', requireRole('warehouse', 'admin'), h(async 
 router.get('/files/:id', h(async (req, res) => {
   const r = await db.execute({ sql: 'SELECT filename, mime, data FROM files WHERE id=?', args: [int(req.params.id)] });
   if (!r.rows.length) throw new HttpError(404, 'File tidak ditemukan');
-  const [filename, mime, data] = r.rows[0];
+  const row = r.rows[0];
+  const filename = row.filename ?? row[0], mime = row.mime ?? row[1], data = row.data ?? row[2];
   res.setHeader('Content-Type', mime);
-  res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${encodeURIComponent(filename)}"`);
+  res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
   res.send(Buffer.from(data));
 }));
 
@@ -269,7 +275,7 @@ router.get('/po', h(async (req, res) => {
   res.json(await all(`SELECT po.*, u.name AS created_by_name,
       (SELECT COALESCE(SUM(qty),0) FROM po_items WHERE po_id=po.id) AS total_qty,
       (SELECT COALESCE(SUM(qty),0) FROM stock_ledger WHERE location='delivered' AND po_id=po.id) AS delivered_qty,
-      (SELECT COALESCE(SUM(bi.qty),0) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE b.po_id=po.id AND b.type='WH_PROD') AS produced_qty,
+      (SELECT COALESCE(SUM(bi.qty),0) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE b.po_id=po.id AND b.type IN ('WH_PROD','WH_DEL')) AS produced_qty,
       (SELECT COUNT(*) FROM po_items WHERE po_id=po.id) AS item_count
     FROM purchase_orders po LEFT JOIN users u ON u.id=po.created_by
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY po.id DESC`, args));
@@ -362,7 +368,7 @@ router.get('/bast', h(async (req, res) => {
   const where = []; const args = [];
   if (req.query.type) { where.push('b.type=?'); args.push(req.query.type); }
   if (req.query.po_id) { where.push('b.po_id=?'); args.push(int(req.query.po_id)); }
-  if (req.query.available_for_do) where.push("b.type='PROD_DEL' AND NOT EXISTS (SELECT 1 FROM delivery_orders d WHERE d.bast_id=b.id)");
+  if (req.query.available_for_do) where.push("b.type IN ('PROD_DEL','WH_DEL') AND NOT EXISTS (SELECT 1 FROM delivery_orders d WHERE d.bast_id=b.id)");
   res.json(await all(`SELECT b.*, po.po_number, po.customer_name, u.name AS created_by_name,
       (SELECT SUM(qty) FROM bast_items WHERE bast_id=b.id) AS total_qty,
       (SELECT id FROM delivery_orders WHERE bast_id=b.id) AS do_id
@@ -385,7 +391,8 @@ router.post('/bast', h(async (req, res) => {
   const role = req.user.role;
   if (type === 'WH_PROD' && !['production', 'admin'].includes(role)) throw new HttpError(403, 'BAST Gudang → Produksi dibuat oleh Produksi');
   if (type === 'PROD_DEL' && !['delivery', 'production', 'admin'].includes(role)) throw new HttpError(403, 'BAST Produksi → Delivery dibuat oleh Delivery');
-  if (!['WH_PROD', 'PROD_DEL'].includes(type)) throw new HttpError(400, 'Jenis BAST tidak valid');
+  if (type === 'WH_DEL' && !['delivery', 'warehouse', 'admin'].includes(role)) throw new HttpError(403, 'BAST Gudang → Delivery dibuat oleh Delivery / Gudang');
+  if (!['WH_PROD', 'PROD_DEL', 'WH_DEL'].includes(type)) throw new HttpError(400, 'Jenis BAST tidak valid');
   if (!str(giver_name) || !str(receiver_name)) throw new HttpError(400, 'Nama pihak yang menyerahkan dan menerima wajib diisi');
   const items = parseItems(req.body.items).filter((i) => int(i.qty) > 0);
   if (!items.length) throw new HttpError(400, 'Isi jumlah minimal pada 1 item');
@@ -400,7 +407,9 @@ router.post('/bast', h(async (req, res) => {
       const pi = progress.find((p) => p.id === int(it.po_item_id));
       if (!pi) throw new HttpError(400, 'Item tidak termasuk dalam PO ini');
       const q = int(it.qty);
-      if (type === 'WH_PROD') {
+      if (type === 'WH_PROD' && pi.category === 'box') throw new HttpError(400, `${pi.description}: barang BOX langsung dari Gudang ke Delivery (BAST Gudang → Delivery)`);
+      if (type === 'WH_DEL' && pi.category !== 'box') throw new HttpError(400, `${pi.description}: barang SHEET harus lewat Produksi (BAST Gudang → Produksi)`);
+      if (type === 'WH_PROD' || type === 'WH_DEL') {
         const remaining = int(pi.qty) - int(pi.qty_produced);
         if (q > remaining) throw new HttpError(400, `${pi.description}: sisa kebutuhan PO hanya ${remaining}`);
         perProduct[pi.product_id] = (perProduct[pi.product_id] || 0) + q;
@@ -409,7 +418,7 @@ router.post('/bast', h(async (req, res) => {
       }
       it._pi = pi;
     }
-    if (type === 'WH_PROD') {
+    if (type === 'WH_PROD' || type === 'WH_DEL') {
       for (const [pid, q] of Object.entries(perProduct)) {
         const bal = await balance(tx, 'warehouse', { productId: int(pid) });
         if (bal < q) {
@@ -418,12 +427,12 @@ router.post('/bast', h(async (req, res) => {
         }
       }
     }
-    const prefix = type === 'WH_PROD' ? 'BAST-GP' : 'BAST-PD';
+    const prefix = { WH_PROD: 'BAST-GP', PROD_DEL: 'BAST-PD', WH_DEL: 'BAST-GD' }[type];
     const date = str(bast_date) || today();
     const number = await nextNumber(tx, 'bast', prefix, date);
     const r = await run('INSERT INTO bast (number, type, po_id, bast_date, giver_name, receiver_name, notes, created_by) VALUES (?,?,?,?,?,?,?,?)',
       [number, type, po.id, date, str(giver_name), str(receiver_name), str(notes), req.user.id], tx);
-    const [from, to] = type === 'WH_PROD' ? ['warehouse', 'production'] : ['production', 'delivery'];
+    const [from, to] = { WH_PROD: ['warehouse', 'production'], PROD_DEL: ['production', 'delivery'], WH_DEL: ['warehouse', 'delivery'] }[type];
     for (const it of items) {
       const q = int(it.qty);
       const pi = it._pi;
@@ -436,6 +445,7 @@ router.post('/bast', h(async (req, res) => {
     }
     await refreshPoStatus(tx, po.id);
     if (type === 'WH_PROD') await notify(tx, ['admin', 'warehouse'], `BAST Gudang → Produksi: ${number}`, `PO ${po.po_number} (${po.customer_name}) — barang diserahterimakan ke produksi.`, `/bast/${r.id}`);
+    else if (type === 'WH_DEL') await notify(tx, ['admin', 'warehouse', 'delivery'], `BAST Gudang → Delivery: ${number}`, `PO ${po.po_number} (${po.customer_name}) — box diserahkan langsung ke delivery.`, `/bast/${r.id}`);
     else await notify(tx, ['admin', 'production', 'delivery'], `BAST Produksi → Delivery: ${number}`, `PO ${po.po_number} (${po.customer_name}) — barang jadi siap dikirim.`, `/bast/${r.id}`);
     return r.id;
   });
@@ -455,36 +465,136 @@ router.get('/do', h(async (req, res) => {
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY d.id DESC`, args));
 }));
 
-router.get('/do/:id', h(async (req, res) => {
-  const d = await one(`SELECT d.*, po.po_number, po.customer_name, po.customer_address, po.customer_phone, po.po_date, b.number AS bast_number,
+// ---------- Dokumen DO (Surat Jalan) & Invoice: data manual mengikuti template ----------
+const SPEC = { B: 'SW', C: 'SW', E: 'SW', CB: 'DW', BC: 'DW' };
+function parseDoc(raw) { try { return raw ? JSON.parse(raw) : null; } catch { return null; } }
+async function getSettings(ex = db) {
+  const rows = await all('SELECT key, value FROM settings', [], ex);
+  const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  try { s.bank_accounts = JSON.parse(s.bank_accounts || '[]'); } catch { s.bank_accounts = []; }
+  return s;
+}
+/** Nomor format template: 002-1026-JPS-SJ / 002-1026-JPS-INV (urut per bulan) */
+async function docNumber(ex, table, suffix, dateStr) {
+  const d = dateStr || today();
+  const mmyy = d.slice(5, 7) + d.slice(2, 4);
+  const rows = await all(`SELECT number FROM ${table} WHERE number LIKE ?`, [`%-${mmyy}-JPS-${suffix}`], ex);
+  const max = rows.reduce((m, r) => Math.max(m, int(String(r.number).split('-')[0])), 0);
+  return `${String(max + 1).padStart(3, '0')}-${mmyy}-JPS-${suffix}`;
+}
+function cleanItems(items, withRef) {
+  return (Array.isArray(items) ? items : []).map((it, i) => {
+    const merge = i > 0 && Boolean(it.merge);
+    const qty = Number(it.qty) || 0;
+    const price = merge ? 0 : Number(it.price) || 0;
+    const total = merge ? 0 : (it.total === '' || it.total === undefined || it.total === null ? price * qty : Number(it.total) || 0);
+    const o = { name: str(it.name), size: str(it.size), spec: str(it.spec), qty, price, total, merge };
+    if (withRef) o.ref = str(it.ref);
+    return o;
+  }).filter((it) => it.name || it.qty);
+}
+const docTotal = (items) => items.filter((i) => !i.merge).reduce((a, i) => a + (Number(i.total) || 0), 0);
+
+async function defaultDoDoc(ex, bastId) {
+  const b = await one('SELECT b.*, po.po_number, po.customer_name, po.customer_address FROM bast b JOIN purchase_orders po ON po.id=b.po_id WHERE b.id=?', [bastId], ex);
+  if (!b) return null;
+  const s = await getSettings(ex);
+  const items = await all(`SELECT bi.qty, pi.description, pi.sheet_length, pi.sheet_width, pi.unit_price, p.flute, p.price_m2
+    FROM bast_items bi JOIN po_items pi ON pi.id=bi.po_item_id JOIN products p ON p.id=bi.product_id WHERE bi.bast_id=? ORDER BY bi.id`, [bastId], ex);
+  return {
+    number: '', city: s.company_city || '', date: today(),
+    customer_name: b.customer_name, attn: '', address: b.customer_address || '',
+    driver: '', vehicle_no: '', po_number: b.po_number,
+    items: items.map((it) => {
+      const area = it.sheet_length && it.sheet_width ? (it.sheet_length * it.sheet_width) / 1e6 : null;
+      const price = it.unit_price || (area ? Math.round(area * it.price_m2) : 0);
+      return { name: it.description, size: it.sheet_length && it.sheet_width ? `${it.sheet_length} x ${it.sheet_width}` : '', spec: SPEC[it.flute] || '', qty: it.qty, price, total: price * it.qty, merge: false };
+    }),
+    show_price: true, payment: 'Transfer', bank: s.bank_accounts[0] || { bank: '', account: '', holder: '' },
+    sign_gudang: s.sj_gudang_name || '', sign_admin: s.sj_admin_name || '', notes: '',
+  };
+}
+
+async function loadDo(ex, id) {
+  const d = await one(`SELECT d.*, po.po_number, po.customer_name, po.customer_address, po.customer_phone, po.po_date, b.number AS bast_number, b.type AS bast_type,
       u.name AS created_by_name, f.filename AS signed_file_name, f.mime AS signed_file_mime
     FROM delivery_orders d JOIN purchase_orders po ON po.id=d.po_id JOIN bast b ON b.id=d.bast_id LEFT JOIN users u ON u.id=d.created_by LEFT JOIN files f ON f.id=d.signed_file_id
-    WHERE d.id=?`, [int(req.params.id)]);
+    WHERE d.id=?`, [id], ex);
+  if (!d) return null;
+  d.items = await all(`SELECT bi.*, pi.description, p.code AS product_code, p.name AS product_name, p.unit
+    FROM bast_items bi JOIN po_items pi ON pi.id=bi.po_item_id JOIN products p ON p.id=bi.product_id WHERE bi.bast_id=? ORDER BY bi.id`, [d.bast_id], ex);
+  let doc = parseDoc(d.doc_data);
+  if (!doc) { // DO lama: bangun dokumen dari data BAST
+    doc = await defaultDoDoc(ex, d.bast_id);
+    Object.assign(doc, { date: d.do_date, driver: d.driver || '', vehicle_no: d.vehicle_no || '', address: d.ship_to || doc.address, notes: d.notes || '' });
+  }
+  doc.number = d.number;
+  d.doc = doc;
+  delete d.doc_data;
+  d.invoice = await one('SELECT id, number, status FROM invoices WHERE do_id=?', [d.id], ex);
+  return d;
+}
+
+function validateDoc(doc, withRef) {
+  if (!doc || typeof doc !== 'object') throw new HttpError(400, 'Data dokumen tidak valid');
+  if (!str(doc.customer_name)) throw new HttpError(400, 'Nama customer (Kepada) wajib diisi');
+  const items = cleanItems(doc.items, withRef);
+  if (!items.length) throw new HttpError(400, 'Minimal 1 baris barang');
+  return {
+    ...doc,
+    number: str(doc.number), city: str(doc.city), date: str(doc.date) || today(),
+    customer_name: str(doc.customer_name), attn: str(doc.attn), address: str(doc.address),
+    items,
+    bank: { bank: str(doc.bank && doc.bank.bank), account: str(doc.bank && doc.bank.account), holder: str(doc.bank && doc.bank.holder) },
+  };
+}
+
+router.get('/do/draft', requireRole('delivery', 'admin'), h(async (req, res) => {
+  const b = await one('SELECT * FROM bast WHERE id=?', [int(req.query.bast_id)]);
+  if (!b || !['PROD_DEL', 'WH_DEL'].includes(b.type)) throw new HttpError(400, 'Pilih BAST ke Delivery yang valid');
+  const doc = await defaultDoDoc(db, b.id);
+  doc.number = await docNumber(db, 'delivery_orders', 'SJ', doc.date);
+  res.json(doc);
+}));
+
+router.get('/do/:id', h(async (req, res) => {
+  const d = await loadDo(db, int(req.params.id));
   if (!d) throw new HttpError(404, 'DO tidak ditemukan');
-  d.items = await all(`SELECT bi.*, pi.description, pi.sheet_length, pi.sheet_width, pi.unit_price, p.code AS product_code, p.name AS product_name, p.unit, p.price_m2
-    FROM bast_items bi JOIN po_items pi ON pi.id=bi.po_item_id JOIN products p ON p.id=bi.product_id WHERE bi.bast_id=? ORDER BY bi.id`, [d.bast_id]);
-  d.items.forEach((it) => {
-    const area = it.sheet_length && it.sheet_width ? (it.sheet_length * it.sheet_width) / 1e6 : null;
-    it.suggested_price = it.unit_price || (area ? Math.round(area * it.price_m2) : 0);
-  });
-  d.invoice = await one('SELECT id, number, status FROM invoices WHERE do_id=?', [d.id]);
   res.json(d);
 }));
 
 router.post('/do', requireRole('delivery', 'admin'), h(async (req, res) => {
-  const { bast_id, do_date, driver, vehicle_no, ship_to, notes } = req.body || {};
+  const { bast_id } = req.body || {};
   const id = await withTx(async (tx) => {
     const b = await one('SELECT b.*, po.po_number, po.customer_name, po.customer_address FROM bast b JOIN purchase_orders po ON po.id=b.po_id WHERE b.id=?', [int(bast_id)], tx);
-    if (!b || b.type !== 'PROD_DEL') throw new HttpError(400, 'Pilih BAST Produksi → Delivery yang valid');
+    if (!b || !['PROD_DEL', 'WH_DEL'].includes(b.type)) throw new HttpError(400, 'Pilih BAST ke Delivery yang valid');
     if (await one('SELECT id FROM delivery_orders WHERE bast_id=?', [b.id], tx)) throw new HttpError(400, 'BAST ini sudah dibuatkan DO');
-    const date = str(do_date) || today();
-    const number = await nextNumber(tx, 'delivery_orders', 'DO', date);
-    const r = await run('INSERT INTO delivery_orders (number, bast_id, po_id, do_date, driver, vehicle_no, ship_to, notes, created_by) VALUES (?,?,?,?,?,?,?,?,?)',
-      [number, b.id, b.po_id, date, str(driver), str(vehicle_no), str(ship_to) || b.customer_address, str(notes), req.user.id], tx);
+    const doc = validateDoc(req.body.doc || (await defaultDoDoc(tx, b.id)), false);
+    const number = doc.number || (await docNumber(tx, 'delivery_orders', 'SJ', doc.date));
+    if (await one('SELECT id FROM delivery_orders WHERE number=?', [number], tx)) throw new HttpError(400, `Nomor ${number} sudah dipakai`);
+    doc.number = number;
+    const r = await run('INSERT INTO delivery_orders (number, bast_id, po_id, do_date, driver, vehicle_no, ship_to, notes, doc_data, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [number, b.id, b.po_id, doc.date, str(doc.driver), str(doc.vehicle_no), doc.address, str(doc.notes), JSON.stringify(doc), req.user.id], tx);
     await notify(tx, 'admin', `DO dibuat: ${number}`, `PO ${b.po_number} (${b.customer_name}) sedang disiapkan untuk dikirim.`, `/do/${r.id}`);
     return r.id;
   });
   res.json({ id });
+}));
+
+router.put('/do/:id', requireRole('delivery', 'admin'), h(async (req, res) => {
+  const id = int(req.params.id);
+  await withTx(async (tx) => {
+    const d = await one('SELECT * FROM delivery_orders WHERE id=?', [id], tx);
+    if (!d) throw new HttpError(404, 'DO tidak ditemukan');
+    if (await one('SELECT id FROM invoices WHERE do_id=?', [id], tx)) throw new HttpError(400, 'DO sudah dibuatkan invoice, tidak bisa diubah');
+    const doc = validateDoc(req.body.doc, false);
+    const number = doc.number || d.number;
+    if (await one('SELECT id FROM delivery_orders WHERE number=? AND id<>?', [number, id], tx)) throw new HttpError(400, `Nomor ${number} sudah dipakai`);
+    doc.number = number;
+    await run('UPDATE delivery_orders SET number=?, do_date=?, driver=?, vehicle_no=?, ship_to=?, notes=?, doc_data=? WHERE id=?',
+      [number, doc.date, str(doc.driver), str(doc.vehicle_no), doc.address, str(doc.notes), JSON.stringify(doc), id], tx);
+  });
+  res.json({ ok: true });
 }));
 
 router.post('/do/:id/ship', requireRole('delivery', 'admin'), h(async (req, res) => {
@@ -529,44 +639,115 @@ router.post('/do/:id/receive', requireRole('admin'), h(async (req, res) => {
 }));
 
 // ---------- Invoices ----------
+async function defaultInvoiceDoc(ex, d) {
+  const s = await getSettings(ex);
+  const sj = d.doc;
+  return {
+    number: '', city: s.company_city || sj.city || '', date: today(), due_date: '',
+    customer_name: sj.customer_name, attn: sj.attn || '', address: sj.address || '',
+    items: sj.items.map((it) => ({ ref: it.merge ? '' : d.number, name: it.name, size: it.size, spec: it.spec, qty: it.qty, price: it.price, total: it.total, merge: it.merge })),
+    tax_rate: Number(s.tax_rate) || 0,
+    bank: s.bank_accounts[0] || { bank: '', account: '', holder: '' },
+    signer: s.invoice_signer || '', note: s.invoice_note || '', attach_sj: true,
+  };
+}
+
+async function loadInvoice(ex, id) {
+  const i = await one(`SELECT i.*, po.po_number, po.po_date, po.customer_name, po.customer_address, po.customer_phone, d.number AS do_number, d.do_date,
+      d.signed_file_id, f.mime AS signed_file_mime, f.filename AS signed_file_name
+    FROM invoices i JOIN purchase_orders po ON po.id=i.po_id JOIN delivery_orders d ON d.id=i.do_id LEFT JOIN files f ON f.id=d.signed_file_id WHERE i.id=?`, [id], ex);
+  if (!i) return null;
+  let doc = parseDoc(i.doc_data);
+  if (!doc) { // invoice lama
+    const items = await all('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id', [i.id], ex);
+    const s = await getSettings(ex);
+    doc = {
+      city: s.company_city || '', date: i.invoice_date, due_date: i.due_date || '',
+      customer_name: i.customer_name, attn: '', address: i.customer_address || '',
+      items: items.map((it) => ({ ref: i.do_number, name: it.description, size: '', spec: '', qty: it.qty, price: it.unit_price, total: it.amount, merge: false })),
+      tax_rate: i.tax_rate, bank: s.bank_accounts[0] || {}, signer: s.invoice_signer || '', note: s.invoice_note || '', attach_sj: true,
+    };
+  }
+  doc.number = i.number;
+  i.doc = doc;
+  delete i.doc_data;
+  return i;
+}
+
 router.get('/invoices', requireRole('admin'), h(async (req, res) => {
-  res.json(await all(`SELECT i.*, po.po_number, po.customer_name, d.number AS do_number FROM invoices i
+  res.json(await all(`SELECT i.id, i.number, i.do_id, i.po_id, i.invoice_date, i.due_date, i.subtotal, i.tax_rate, i.tax, i.total, i.status, i.paid_at,
+      po.po_number, po.customer_name, d.number AS do_number FROM invoices i
     JOIN purchase_orders po ON po.id=i.po_id JOIN delivery_orders d ON d.id=i.do_id ORDER BY i.id DESC`));
 }));
 
+router.get('/invoices/draft', requireRole('admin'), h(async (req, res) => {
+  const d = await loadDo(db, int(req.query.do_id));
+  if (!d) throw new HttpError(404, 'DO tidak ditemukan');
+  const doc = await defaultInvoiceDoc(db, d);
+  doc.number = await docNumber(db, 'invoices', 'INV', doc.date);
+  doc.due_date = '';
+  res.json({ doc, do: { id: d.id, number: d.number, status: d.status, signed_file_id: d.signed_file_id, signed_at: d.signed_at, received_by_customer: d.received_by_customer, po_number: d.po_number } });
+}));
+
 router.get('/invoices/:id', requireRole('admin'), h(async (req, res) => {
-  const i = await one(`SELECT i.*, po.po_number, po.po_date, po.customer_name, po.customer_address, po.customer_phone, d.number AS do_number, d.do_date
-    FROM invoices i JOIN purchase_orders po ON po.id=i.po_id JOIN delivery_orders d ON d.id=i.do_id WHERE i.id=?`, [int(req.params.id)]);
+  const i = await loadInvoice(db, int(req.params.id));
   if (!i) throw new HttpError(404, 'Invoice tidak ditemukan');
-  i.items = await all('SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id', [i.id]);
   res.json(i);
 }));
 
+function invoiceTotals(doc) {
+  const subtotal = docTotal(doc.items);
+  const rate = Number(doc.tax_rate) || 0;
+  const tax = Math.round(subtotal * rate / 100);
+  return { subtotal, rate, tax, total: subtotal + tax };
+}
+
+async function writeInvoiceItems(tx, invoiceId, doc) {
+  await run('DELETE FROM invoice_items WHERE invoice_id=?', [invoiceId], tx);
+  // ringkasan per kelompok (untuk laporan); detail lengkap tersimpan di doc_data
+  for (const it of doc.items.filter((x) => !x.merge)) {
+    await run('INSERT INTO invoice_items (invoice_id, description, qty, unit, unit_price, amount) VALUES (?,?,?,?,?,?)',
+      [invoiceId, it.name, int(it.qty), 'pcs', Number(it.price) || 0, Number(it.total) || 0], tx);
+  }
+}
+
 router.post('/invoices', requireRole('admin'), h(async (req, res) => {
-  const { do_id, invoice_date, due_date, tax_rate, notes } = req.body || {};
-  const items = parseItems(req.body.items).filter((it) => int(it.qty) > 0);
-  if (!items.length) throw new HttpError(400, 'Invoice minimal 1 item');
+  const { do_id } = req.body || {};
   const id = await withTx(async (tx) => {
     const d = await one('SELECT * FROM delivery_orders WHERE id=?', [int(do_id)], tx);
     if (!d) throw new HttpError(400, 'DO tidak ditemukan');
     if (d.status !== 'ditandatangani') throw new HttpError(400, 'Invoice hanya bisa dibuat dari DO yang sudah ditandatangani customer');
     if (await one('SELECT id FROM invoices WHERE do_id=?', [d.id], tx)) throw new HttpError(400, 'DO ini sudah dibuatkan invoice');
-    const subtotal = items.reduce((a, it) => a + int(it.qty) * (Number(it.unit_price) || 0), 0);
-    const rate = Number(tax_rate) || 0;
-    const tax = Math.round(subtotal * rate / 100);
-    const date = str(invoice_date) || today();
-    const number = await nextNumber(tx, 'invoices', 'INV', date);
-    const r = await run('INSERT INTO invoices (number, do_id, po_id, invoice_date, due_date, subtotal, tax_rate, tax, total, notes, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      [number, d.id, d.po_id, date, str(due_date) || null, subtotal, rate, tax, subtotal + tax, str(notes), req.user.id], tx);
-    for (const it of items) {
-      const q = int(it.qty), p = Number(it.unit_price) || 0;
-      await run('INSERT INTO invoice_items (invoice_id, description, qty, unit, unit_price, amount) VALUES (?,?,?,?,?,?)', [r.id, str(it.description), q, str(it.unit) || 'pcs', p, q * p], tx);
-    }
+    const doc = validateDoc(req.body.doc, true);
+    const number = doc.number || (await docNumber(tx, 'invoices', 'INV', doc.date));
+    if (await one('SELECT id FROM invoices WHERE number=?', [number], tx)) throw new HttpError(400, `Nomor ${number} sudah dipakai`);
+    doc.number = number;
+    const t = invoiceTotals(doc);
+    const r = await run('INSERT INTO invoices (number, do_id, po_id, invoice_date, due_date, subtotal, tax_rate, tax, total, notes, doc_data, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      [number, d.id, d.po_id, doc.date, str(doc.due_date) || null, t.subtotal, t.rate, t.tax, t.total, str(doc.note), JSON.stringify(doc), req.user.id], tx);
+    await writeInvoiceItems(tx, r.id, doc);
     await run("UPDATE delivery_orders SET admin_received_at=COALESCE(admin_received_at, datetime('now')) WHERE id=?", [d.id], tx);
     await refreshPoStatus(tx, d.po_id);
     return r.id;
   });
   res.json({ id });
+}));
+
+router.put('/invoices/:id', requireRole('admin'), h(async (req, res) => {
+  const id = int(req.params.id);
+  await withTx(async (tx) => {
+    const inv = await one('SELECT * FROM invoices WHERE id=?', [id], tx);
+    if (!inv) throw new HttpError(404, 'Invoice tidak ditemukan');
+    const doc = validateDoc(req.body.doc, true);
+    const number = doc.number || inv.number;
+    if (await one('SELECT id FROM invoices WHERE number=? AND id<>?', [number, id], tx)) throw new HttpError(400, `Nomor ${number} sudah dipakai`);
+    doc.number = number;
+    const t = invoiceTotals(doc);
+    await run('UPDATE invoices SET number=?, invoice_date=?, due_date=?, subtotal=?, tax_rate=?, tax=?, total=?, notes=?, doc_data=? WHERE id=?',
+      [number, doc.date, str(doc.due_date) || null, t.subtotal, t.rate, t.tax, t.total, str(doc.note), JSON.stringify(doc), id], tx);
+    await writeInvoiceItems(tx, id, doc);
+  });
+  res.json({ ok: true });
 }));
 
 router.put('/invoices/:id/status', requireRole('admin'), h(async (req, res) => {
@@ -641,7 +822,7 @@ router.get('/dashboard', h(async (req, res) => {
   const recentPo = await all(`SELECT po.id, po.po_number, po.customer_name, po.status, po.po_date, po.due_date,
       (SELECT COALESCE(SUM(qty),0) FROM po_items WHERE po_id=po.id) AS total_qty,
       (SELECT COALESCE(SUM(qty),0) FROM stock_ledger WHERE location='delivered' AND po_id=po.id) AS delivered_qty,
-      (SELECT COALESCE(SUM(bi.qty),0) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE b.po_id=po.id AND b.type='WH_PROD') AS produced_qty
+      (SELECT COALESCE(SUM(bi.qty),0) FROM bast_items bi JOIN bast b ON b.id=bi.bast_id WHERE b.po_id=po.id AND b.type IN ('WH_PROD','WH_DEL')) AS produced_qty
     FROM purchase_orders po WHERE po.status <> 'batal' ORDER BY po.id DESC LIMIT 6`);
   const lowStock = await all(`SELECT p.id, p.code, p.name, p.unit, p.min_stock, COALESCE(SUM(l.qty),0) AS stock FROM products p
     LEFT JOIN stock_ledger l ON l.product_id=p.id AND l.location='warehouse' WHERE p.active=1 AND p.min_stock>0

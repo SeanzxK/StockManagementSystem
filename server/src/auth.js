@@ -6,7 +6,7 @@ const setSecret = (s) => { if (!process.env.JWT_SECRET) SECRET = s; };
 const COOKIE = 'isms_token';
 
 function sign(user) {
-  return jwt.sign({ id: user.id, role: user.role, name: user.name, username: user.username }, SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user.id, role: user.role, name: user.name, username: user.username }, SECRET, { expiresIn: '12h' });
 }
 
 function setCookie(res, token) {
@@ -14,7 +14,7 @@ function setCookie(res, token) {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 3600 * 1000,
+    // Tanpa maxAge = cookie sesi: otomatis hilang saat browser ditutup
   });
 }
 

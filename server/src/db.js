@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS products (
   price_m2 REAL NOT NULL DEFAULT 0,
   unit TEXT NOT NULL DEFAULT 'lembar',
   min_stock INTEGER NOT NULL DEFAULT 0,
+  category TEXT NOT NULL DEFAULT 'sheet',
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -68,7 +69,7 @@ CREATE TABLE IF NOT EXISTS po_items (
 CREATE TABLE IF NOT EXISTS bast (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   number TEXT UNIQUE NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('WH_PROD','PROD_DEL')),
+  type TEXT NOT NULL CHECK (type IN ('WH_PROD','PROD_DEL','WH_DEL')),
   po_id INTEGER NOT NULL,
   bast_date TEXT NOT NULL,
   giver_name TEXT NOT NULL,
@@ -238,23 +239,89 @@ async function migrate() {
     console.log(`[seed] ${stmts.length} jenis barang karton dibuat`);
   }
 
-  const defaults = {
-    company_name: 'PT Percetakan Karton Nusantara',
-    company_address: 'Jl. Industri No. 1, Kawasan Industri',
-    company_phone: '(021) 000-0000',
-    company_email: 'admin@perusahaan.co.id',
-    bank_info: 'Bank BCA 000-000-0000 a.n. PT Percetakan Karton Nusantara',
-    tax_rate: '11',
-    invoice_due_days: '30',
-  };
   // Secret JWT: pakai env bila ada, kalau tidak buat acak sekali & simpan di DB
   await db.execute({ sql: 'INSERT OR IGNORE INTO app_secrets (key, value) VALUES (?, ?)', args: ['jwt_secret', require('crypto').randomBytes(48).toString('hex')] });
   const sec = await db.execute("SELECT value FROM app_secrets WHERE key='jwt_secret'");
   require('./auth').setSecret(String(sec.rows[0][0]));
 
-  for (const [k, v] of Object.entries(defaults)) {
-    await db.execute({ sql: 'INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)', args: [k, v] });
+  const v = await db.execute("SELECT value FROM settings WHERE key='schema_version'");
+  const version = v.rows.length ? Number(v.rows[0][0]) : 1;
+  if (version < 2) await migrateV2();
+}
+
+const COMPANY = {
+  company_name: 'PT Jitu Persada Sinergi',
+  company_tagline: 'Sinergi Profesional Terpercaya',
+  company_address: 'Greenville Residence Solo',
+  company_phone: '081325240263',
+  company_email: '',
+  company_city: 'Surakarta',
+  bank_accounts: JSON.stringify([{ bank: 'Bank Mandiri', account: '135.002.133946.8', holder: 'AGUNG SUBAGIO' }]),
+  invoice_signer: 'AGUNG SUBAGIO',
+  invoice_note: 'Kirimkan Bukti Transfer apabila sudah melakukan pembayaran. Terima Kasih',
+  sj_gudang_name: '',
+  sj_admin_name: '',
+  tax_rate: '0',
+  invoice_due_days: '30',
+};
+
+/** v2: kategori Sheet/Box, BAST Gudang→Delivery, dokumen DO/Invoice manual, profil PT Jitu Persada Sinergi */
+async function migrateV2() {
+  const cols = async (t) => (await db.execute(`PRAGMA table_info(${t})`)).rows.map((r) => r[1]);
+  if (!(await cols('products')).includes('category')) await db.execute("ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT 'sheet'");
+  if (!(await cols('delivery_orders')).includes('doc_data')) await db.execute('ALTER TABLE delivery_orders ADD COLUMN doc_data TEXT');
+  if (!(await cols('invoices')).includes('doc_data')) await db.execute('ALTER TABLE invoices ADD COLUMN doc_data TEXT');
+
+  // BAST lama hanya mengizinkan WH_PROD / PROD_DEL → bangun ulang tabel dengan WH_DEL
+  const bsql = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='bast'");
+  if (bsql.rows.length && !String(bsql.rows[0][0]).includes('WH_DEL')) {
+    await db.batch([
+      `CREATE TABLE bast_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        number TEXT UNIQUE NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('WH_PROD','PROD_DEL','WH_DEL')),
+        po_id INTEGER NOT NULL,
+        bast_date TEXT NOT NULL,
+        giver_name TEXT NOT NULL,
+        receiver_name TEXT NOT NULL,
+        notes TEXT,
+        created_by INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+      'INSERT INTO bast_v2 (id, number, type, po_id, bast_date, giver_name, receiver_name, notes, created_by, created_at) SELECT id, number, type, po_id, bast_date, giver_name, receiver_name, notes, created_by, created_at FROM bast',
+      'DROP TABLE bast',
+      'ALTER TABLE bast_v2 RENAME TO bast',
+    ], 'write');
   }
+
+  // Master barang BOX: isi sama dengan Sheet
+  const box = await db.execute("SELECT COUNT(*) FROM products WHERE category='box'");
+  if (Number(box.rows[0][0]) === 0) {
+    const stmts = [];
+    PRICE_TABLE.forEach((row, i) => {
+      const no = String(i + 1).padStart(2, '0');
+      const subs = `${row[3]}/${row[4]}/${row[5]}`;
+      [['B', row[0]], ['C', row[1]], ['CB', row[2]]].forEach(([flute, price]) => {
+        stmts.push({
+          sql: "INSERT OR IGNORE INTO products (code, name, flute, substance, price_m2, unit, category) VALUES (?,?,?,?,?,'pcs','box')",
+          args: [`BOX-${flute}-${no}`, `Box Flute ${flute} ${subs}`, flute, subs, price],
+        });
+      });
+    });
+    await db.batch(stmts, 'write');
+  }
+
+  // Profil perusahaan: ganti nilai contoh lama, isi yang belum ada
+  const cur = Object.fromEntries((await db.execute('SELECT key, value FROM settings')).rows.map((r) => [r[0], r[1]]));
+  const stmts = [];
+  const isOldDefault = !cur.company_name || cur.company_name === 'PT Percetakan Karton Nusantara';
+  for (const [k, val] of Object.entries(COMPANY)) {
+    if (cur[k] === undefined || (isOldDefault && k.startsWith('company_')) || (isOldDefault && k === 'tax_rate')) {
+      stmts.push({ sql: 'INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', args: [k, val] });
+    }
+  }
+  stmts.push({ sql: "INSERT INTO settings (key, value) VALUES ('schema_version','2') ON CONFLICT(key) DO UPDATE SET value='2'", args: [] });
+  await db.batch(stmts, 'write');
+  console.log('[migrate] skema v2 diterapkan');
 }
 
 module.exports = { db, migrate };
