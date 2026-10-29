@@ -32,19 +32,54 @@ export function useApi(path, deps = []) {
 // ---------- Auth ----------
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
+// Login hanya berlaku selama browser terbuka: tiap tab menyimpan penanda di sessionStorage.
+// Tab baru menanyakan ke tab lain (BroadcastChannel). Jika tidak ada tab aktif → sesi dianggap berakhir.
+const TAB_KEY = 'isms_tab_session';
+const ssGet = () => { try { return sessionStorage.getItem(TAB_KEY); } catch { return null; } };
+const ssSet = (v) => { try { if (v) sessionStorage.setItem(TAB_KEY, '1'); else sessionStorage.removeItem(TAB_KEY); } catch { /* abaikan */ } };
+function askOtherTabs() {
+  if (typeof BroadcastChannel === 'undefined') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const ch = new BroadcastChannel('isms-session');
+    const t = setTimeout(() => { ch.close(); resolve(false); }, 400);
+    ch.onmessage = (e) => { if (e.data === 'alive') { clearTimeout(t); ch.close(); resolve(true); } };
+    ch.postMessage('ping');
+  });
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(undefined);
   useEffect(() => {
-    api('/auth/me').then((d) => setUser(d.user)).catch(() => setUser(null));
+    let ch;
+    if (typeof BroadcastChannel !== 'undefined') {
+      ch = new BroadcastChannel('isms-session');
+      ch.onmessage = (e) => {
+        if (e.data === 'ping' && ssGet()) ch.postMessage('alive');
+        if (e.data === 'logout') { ssSet(false); setUser(null); }
+      };
+    }
+    (async () => {
+      if (!ssGet()) {
+        if (await askOtherTabs()) ssSet(true);
+        else { await api('/auth/logout', { method: 'POST' }).catch(() => {}); setUser(null); return; }
+      }
+      api('/auth/me').then((d) => setUser(d.user)).catch(() => { ssSet(false); setUser(null); });
+    })();
     const h = () => setUser(null);
     window.addEventListener('isms:unauthorized', h);
-    return () => window.removeEventListener('isms:unauthorized', h);
+    return () => { window.removeEventListener('isms:unauthorized', h); if (ch) ch.close(); };
   }, []);
   const login = async (username, password) => {
     const d = await api('/auth/login', { method: 'POST', body: { username, password } });
+    ssSet(true);
     setUser(d.user);
   };
-  const logout = async () => { await api('/auth/logout', { method: 'POST' }).catch(() => {}); setUser(null); };
+  const logout = async () => {
+    await api('/auth/logout', { method: 'POST' }).catch(() => {});
+    ssSet(false);
+    try { const c = new BroadcastChannel('isms-session'); c.postMessage('logout'); c.close(); } catch { /* abaikan */ }
+    setUser(null);
+  };
   return <AuthCtx.Provider value={{ user, login, logout }}>{children}</AuthCtx.Provider>;
 }
 
@@ -128,6 +163,12 @@ export const PO_STATUS = {
   terkirim: ['Terkirim', 'b-green'],
   selesai: ['Selesai', 'b-dark'],
   batal: ['Batal', 'b-red'],
+};
+export const CATEGORY = { sheet: 'Sheet', box: 'Box' };
+export const BAST_TYPE = {
+  WH_PROD: { label: 'Gudang → Produksi', from: 'Gudang', to: 'Produksi', badge: 'b-amber' },
+  PROD_DEL: { label: 'Produksi → Delivery', from: 'Produksi', to: 'Delivery', badge: 'b-blue' },
+  WH_DEL: { label: 'Gudang → Delivery (Box)', from: 'Gudang', to: 'Delivery', badge: 'b-green' },
 };
 export const DO_STATUS = {
   dibuat: ['Dibuat', 'b-gray'],

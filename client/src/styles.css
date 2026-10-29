@@ -355,3 +355,69 @@ textarea.input { resize: vertical; min-height: 80px; }
   .paper-wrap { overflow: visible; padding: 0; }
   .print-hide { display: none !important; }
 }
+
+/* ---------- Kop & template dokumen PT Jitu Persada Sinergi ---------- */
+.lh img { height: 46px; width: auto; display: block; }
+.lh-addr { font-size: 10.5px; font-weight: 700; margin-top: 3px; color: #111; }
+.paper .co .lh img { height: 42px; }
+.paper-wrap { display: flex; flex-direction: column; gap: 18px; }
+.paper-wrap.pdf-mode { gap: 0; padding: 0; overflow: visible; }
+.paper-wrap.pdf-mode .paper { box-shadow: none; border-radius: 0; margin: 0; }
+.tpl { border: 1.5px solid #222; padding: 7mm 7mm 8mm; font-family: Carlito, Calibri, 'Plus Jakarta Sans', Arial, sans-serif; color: #111; font-size: 12px; min-height: 120mm; }
+.tpl-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.tpl-place { font-size: 13px; padding-top: 4px; white-space: nowrap; }
+.tpl-meta { border-collapse: collapse; font-size: 12px; margin: 0 !important; width: auto !important; }
+.tpl-meta td { border: 0 !important; padding: 1px 4px !important; font-size: 12px !important; background: none !important; }
+.tpl-to { margin: 14px 0 6px; font-size: 13px; line-height: 1.45; }
+.tpl-title { text-align: center; margin: 10px 0 2px; color: #111 !important; }
+.tpl-title.sj { font-size: 19px; text-decoration: underline; letter-spacing: .02em; }
+.tpl-title.inv { font-size: 17px; font-style: italic; text-decoration: underline; letter-spacing: .12em; }
+.tpl-number { text-align: center; font-weight: 700; font-size: 13px; margin-bottom: 10px; }
+.paper table.tpl-table { width: 100%; border-collapse: collapse; margin: 8px 0 0; }
+.paper .tpl-table th { background: #fff; color: #111; border: 1px solid #222; font-weight: 700; font-size: 12px; padding: 4px 6px; text-align: center; }
+.paper .tpl-table.inv th { background: #dcd8ee; }
+.paper .tpl-table td { border: 1px solid #222; padding: 3px 6px; font-size: 12px; vertical-align: middle; }
+.paper .tpl-table td.noline { border: 0; }
+.paper .tpl-table .tpl-total td { border-top: 1px solid #222; }
+.paper .tpl-table td.dbl { border-bottom: 3px double #222; }
+.tpl-sum { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 0; }
+.tpl-terb-label { font-size: 10.5px; font-weight: 700; padding-top: 4px; }
+.paper .tpl-sum table { width: auto; min-width: 210px; border-collapse: collapse; margin: 0; }
+.paper .tpl-sum td { border: 0; padding: 3px 8px; font-size: 12.5px; }
+.paper .tpl-sum .grand td { font-size: 14px; }
+.paper .tpl-sum td.hl { background: #dcd8ee; border: 1px solid #222; min-width: 110px; }
+.tpl-terbilang { margin: 6px 0 12px; border: 3px double #222; background: #dcd8ee; text-align: center; font-weight: 800; font-style: italic; font-size: 13px; padding: 5px 10px; }
+.tpl-bottom { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.tpl-bottom-left { flex: 1; }
+.tpl-pay-title { font-weight: 700; font-size: 12.5px; margin-bottom: 4px; }
+.tpl-bank { border: 1.5px solid #222; box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 3px #222; padding: 5px 10px; font-weight: 800; font-style: italic; font-size: 12.5px; display: inline-block; min-width: 70%; }
+.tpl-due { font-size: 11.5px; margin-top: 6px; }
+.tpl-note { margin-top: 18px; font-size: 11px; display: flex; flex-direction: column; gap: 4px; padding-left: 18px; }
+.tpl-note i { color: #c00000; font-weight: 700; }
+.tpl-sign { text-align: center; min-width: 200px; font-size: 12px; }
+.tpl-sign img { height: 44px; margin: 8px auto 4px; display: block; opacity: .95; }
+.tpl-sign-name { font-weight: 700; margin-top: 18px; }
+.tpl-pay { margin-top: 14px; font-size: 12.5px; line-height: 1.7; }
+.tpl-sigs { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 14px; margin-top: 14px; align-items: end; text-align: center; font-size: 12px; }
+.tpl-sigs .sig i { display: block; font-size: 10.5px; font-weight: 700; margin-top: 4px; }
+.tpl-sigs .sig-line { margin-top: 62px; white-space: nowrap; }
+.paper table.sig-box { width: 100%; border-collapse: collapse; margin: 0; }
+.paper .sig-box th, .paper .sig-box td { border: 1px solid #222; background: #fff; color: #111; font-size: 12px; padding: 3px 6px; text-align: center; font-weight: 700; }
+.paper .sig-box .sig-space td { height: 58px; }
+.tpl-note-plain { font-size: 11.5px; margin: 8px 0; }
+.tpl-lampiran-title { text-align: center; font-weight: 700; font-size: 13px; margin-bottom: 10px; }
+.tpl-lampiran-img { display: block; max-width: 100%; max-height: 240mm; margin: 0 auto; }
+.items-edit tr.merged td { background: #f6f8f7; }
+.items-edit td { padding: 6px 6px !important; }
+.preview-box { background: #e9ecea; border-radius: 18px; padding: 16px; overflow-x: auto; }
+.preview-box .paper { margin: 0 auto; }
+.cat-switch { display: inline-flex; background: #fff; border-radius: 999px; padding: 4px; gap: 4px; border: 1.5px solid var(--line); }
+.cat-switch button { border: 0; background: none; border-radius: 999px; padding: 9px 22px; font-weight: 700; font-size: 14px; color: var(--ink-2); cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+.cat-switch button.on { background: var(--green-800); color: #fff; }
+.cat-switch button .n { font-size: 11px; background: rgba(0,0,0,.08); padding: 1px 7px; border-radius: 99px; }
+.cat-switch button.on .n { background: rgba(255,255,255,.2); }
+.brand-img { height: 38px; width: auto; display: block; }
+@media print {
+  .paper-wrap { gap: 0; }
+  .paper.page-next { page-break-before: always; break-before: page; }
+}

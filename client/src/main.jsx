@@ -44,9 +44,11 @@ function AppRoutes() {
         <Route path="do" element={<Guard roles={['admin', 'delivery']}><DoList /></Guard>} />
         <Route path="do/baru" element={<Guard roles={['admin', 'delivery']}><DoForm /></Guard>} />
         <Route path="do/:id" element={<DoDetail />} />
+        <Route path="do/:id/edit" element={<Guard roles={['admin', 'delivery']}><DoForm /></Guard>} />
         <Route path="invoice" element={<Guard roles={['admin']}><InvoiceList /></Guard>} />
         <Route path="invoice/baru" element={<Guard roles={['admin']}><InvoiceForm /></Guard>} />
         <Route path="invoice/:id" element={<Guard roles={['admin']}><InvoiceDetail /></Guard>} />
+        <Route path="invoice/:id/edit" element={<Guard roles={['admin']}><InvoiceForm /></Guard>} />
         <Route path="barang" element={<Guard roles={['admin', 'warehouse']}><Products /></Guard>} />
         <Route path="pengguna" element={<Guard roles={['admin']}><UsersPage /></Guard>} />
         <Route path="pengaturan" element={<Guard roles={['admin']}><SettingsPage /></Guard>} />
