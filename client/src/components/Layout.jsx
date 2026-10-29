@@ -49,10 +49,10 @@ const GENERAL = {
 };
 const FLOW = [
   ['PO dari Customer', 'admin'],
-  ['BAST Gudang → Produksi', 'production'],
-  ['BAST Produksi → Delivery', 'delivery'],
-  ['Delivery Order & TTD', 'delivery'],
-  ['Invoice', 'admin'],
+  ['Sheet: BAST Gudang → Produksi', 'production'],
+  ['BAST ke Delivery (Box langsung dari Gudang)', 'delivery'],
+  ['Surat Jalan & TTD Customer', 'delivery'],
+  ['Invoice + lampiran SJ', 'admin'],
 ];
 
 export default function Layout() {
@@ -76,8 +76,7 @@ export default function Layout() {
       {open && <div className="scrim" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="brand">
-          <div className="brand-logo"><Boxes size={20} strokeWidth={2.4} /></div>
-          <div><div className="brand-name">StockKarton</div><div className="brand-sub">Inventory Stock Management System</div></div>
+          <div><img className="brand-img" src="/logo-jps.png" alt="PT Jitu Persada Sinergi" /><div className="brand-sub" style={{ marginTop: 6 }}>Inventory Stock Management System</div></div>
         </div>
         <div className="nav-label">Menu</div>
         <nav className="nav">
