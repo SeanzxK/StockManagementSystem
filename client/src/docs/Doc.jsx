@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
 import { Printer, Download, Share2, MessageCircle, Mail } from 'lucide-react';
-import { Boxes } from 'lucide-react';
 import { useApi, useToast } from '../lib';
 
 export function useSettings() {
@@ -15,8 +14,10 @@ async function makePdf(el, filename) {
     image: { type: 'jpeg', quality: 0.95 },
     html2canvas: { scale: 2, useCORS: true },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['css'], before: '.page-next' },
   };
-  return html2pdf().set(opt).from(el).outputPdf('blob');
+  el.classList.add('pdf-mode');
+  try { return await html2pdf().set(opt).from(el).outputPdf('blob'); } finally { el.classList.remove('pdf-mode'); }
 }
 
 /** Toolbar cetak / simpan PDF / bagikan untuk dokumen */
@@ -72,20 +73,33 @@ export function DocActions({ paperRef, filename, title, extra }) {
   );
 }
 
-export function Paper({ paperRef, children }) {
-  return <div className="paper-wrap"><div className="paper" ref={paperRef}>{children}</div></div>;
+/** Kertas A4. `extraPages` = halaman tambahan (mis. lampiran) yang dimulai di halaman baru. */
+export function Paper({ paperRef, children, extraPages = [] }) {
+  return (
+    <div className="paper-wrap" ref={paperRef}>
+      <div className="paper">{children}</div>
+      {extraPages.filter(Boolean).map((pg, i) => <div className="paper page-next" key={i}>{pg}</div>)}
+    </div>
+  );
+}
+
+export const LOGO_SRC = '/logo-jps.png';
+
+/** Kop: logo perusahaan + alamat (sesuai template PT Jitu Persada Sinergi) */
+export function Letterhead({ s }) {
+  return (
+    <div className="lh">
+      <img src={LOGO_SRC} alt={s.company_name || 'Logo'} />
+      <div className="lh-addr">{s.company_address}{s.company_phone ? `, Phone ${s.company_phone}` : ''}</div>
+    </div>
+  );
 }
 
 export function DocHeader({ s, title, number, date }) {
   return (
     <div className="dh">
       <div className="co">
-        <div className="lg"><Boxes size={22} /></div>
-        <div>
-          <b>{s.company_name}</b>
-          <span>{s.company_address}</span>
-          <span>Telp {s.company_phone} · {s.company_email}</span>
-        </div>
+        <Letterhead s={s} />
       </div>
       <div className="title">
         <h2>{title}</h2>
