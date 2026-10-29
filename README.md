@@ -1,4 +1,4 @@
-# Inventory Stock Management System (StockKarton)
+# Inventory Stock Management System — PT Jitu Persada Sinergi
 
 Aplikasi web fullstack untuk memantau stok di pabrik percetakan karton, dari **gudang → produksi → delivery → customer**, lengkap dengan dokumen PO, BAST, Delivery Order dan Invoice yang bisa dicetak, disimpan sebagai PDF dan dibagikan.
 
@@ -7,6 +7,15 @@ Aplikasi web fullstack untuk memantau stok di pabrik percetakan karton, dari **g
 - **Database:** SQLite/libSQL. Saat development memakai file lokal, saat production memakai **Turso (gratis)**. File scan (PO & DO bertanda tangan) disimpan langsung di database, jadi tidak perlu storage berbayar.
 
 ---
+
+
+### Pembaruan v2
+- **Login otomatis hilang saat browser ditutup**: cookie sesi + penanda per tab; tidak perlu logout manual.
+- **Master barang 2 grup**: **Sheet** (Gudang → Produksi → Delivery) dan **Box** (Gudang → langsung Delivery lewat *BAST Gudang → Delivery*). Isi Box = daftar yang sama dengan Sheet (kode `BOX-…`).
+- **Surat Jalan (DO) & Invoice mengikuti template perusahaan**, dengan logo. Semua isian (nomor, tanggal, kepada/Up., alamat, barang, ukuran, spec, qty, harga, total, baris gabungan) bisa diisi/diubah manual, dengan pratinjau langsung.
+- Nomor otomatis format template: `001-1026-JPS-SJ` dan `001-1026-JPS-INV` (bisa diubah).
+- Invoice mencantumkan No. SJ per baris dan melampirkan scan Surat Jalan bertanda tangan di halaman 2.
+- **Rekening bank** dikelola admin di *Pengaturan* (bisa lebih dari satu) dan dapat dipilih/diubah per dokumen.
 
 ## 1. Akun default
 
@@ -84,31 +93,12 @@ Database lokal otomatis dibuat di `server/data/inventory.db`.
 
 ---
 
-## 4. Deploy gratis (Render + Turso)
+## 4. Hosting (sudah live)
 
-### a. Buat database di Turso (gratis)
-1. Daftar di https://turso.tech lalu buat database baru, misalnya `inventory-karton`.
-2. Catat **Database URL** (`libsql://inventory-karton-xxx.turso.io`).
-3. Buat **token**: menu *Create Token*, atau via CLI `turso db tokens create inventory-karton`.
-
-### b. Upload kode ke GitHub
-Buat repository baru, lalu push seluruh folder ini.
-
-### c. Deploy di Render (gratis)
-1. Daftar di https://render.com, pilih **New → Blueprint**, lalu pilih repository tadi. File `render.yaml` sudah disiapkan.
-2. Isi environment variable:
-   - `DATABASE_URL` = URL Turso
-   - `DATABASE_AUTH_TOKEN` = token Turso
-   - `JWT_SECRET` dibuat otomatis
-3. Tunggu sampai build selesai, lalu buka URL `https://xxx.onrender.com`.
-
-Tabel, akun default dan data barang dibuat otomatis saat aplikasi pertama kali jalan.
-
-> **Catatan paket gratis Render:** server "tidur" setelah 15 menit tanpa akses, jadi akses pertama setelahnya butuh ±30–60 detik. Data tetap aman karena tersimpan di Turso. Supaya selalu aktif, bisa dipasang ping gratis (mis. UptimeRobot ke `/api/health` tiap 10 menit).
->
-> Alternatif hosting gratis lain yang bisa menjalankan Node.js: Koyeb, Railway (kredit), atau server lokal pabrik (`npm start` di PC kantor, diakses lewat Wi-Fi).
-
----
+- **Alamat aplikasi:** https://stockkarton.vercel.app
+- **Hosting:** Vercel paket Hobby (gratis, tanpa kartu), proyek `stockkarton`, terhubung ke GitHub `SeanzxK/StockManagementSystem` cabang `main`. Setiap perubahan yang di-push ke `main` otomatis di-deploy ulang.
+- **Database:** Turso (gratis), database `inventory-karton` (region Tokyo). Environment variable di Vercel: `DATABASE_URL` dan `DATABASE_AUTH_TOKEN`. Secret login dibuat otomatis dan disimpan di database.
+- **Batas upload scan:** 4 MB per file (batas Vercel). Foto dari HP diperkecil otomatis.
 
 ## 5. Struktur proyek
 
