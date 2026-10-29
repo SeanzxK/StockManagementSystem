@@ -86,7 +86,7 @@ export default function Dashboard() {
     admin: [<Link key="a" to="/po/baru" className="btn btn-primary"><Plus size={18} /> Buat PO</Link>, <Link key="b" to="/invoice" className="btn btn-outline">Invoice</Link>],
     warehouse: [<Link key="a" to="/stok/gudang?aksi=in" className="btn btn-primary"><ArrowDownToLine size={18} /> Barang Masuk</Link>, <Link key="b" to="/stok/gudang?aksi=out" className="btn btn-outline"><ArrowUpFromLine size={18} /> Barang Keluar</Link>],
     production: [<Link key="a" to="/bast/baru?type=WH_PROD" className="btn btn-primary"><Plus size={18} /> BAST dari Gudang</Link>, <Link key="b" to="/po" className="btn btn-outline">Lihat PO</Link>],
-    delivery: [<Link key="a" to="/bast/baru?type=PROD_DEL" className="btn btn-primary"><Plus size={18} /> BAST dari Produksi</Link>, <Link key="b" to="/do/baru" className="btn btn-outline">Buat DO</Link>],
+    delivery: [<Link key="a" to="/bast/baru?type=PROD_DEL" className="btn btn-primary"><Plus size={18} /> BAST dari Produksi</Link>, <Link key="c" to="/bast/baru?type=WH_DEL" className="btn btn-outline"><Plus size={18} /> Box dari Gudang</Link>, <Link key="b" to="/do/baru" className="btn btn-outline">Buat DO</Link>],
   }[role];
 
   const stats = {

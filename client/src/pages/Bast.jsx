@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Plus, ClipboardCheck, Truck } from 'lucide-react';
-import { api, useApi, useAuth, useToast, fmtNum, fmtDate, todayStr, DO_STATUS } from '../lib';
+import { api, useApi, useAuth, useToast, fmtNum, fmtDate, todayStr, DO_STATUS, BAST_TYPE } from '../lib';
 import { Badge, Empty, Field, Loading, PageHead } from '../components/ui';
 import { DocActions, DocHeader, Paper, Signatures, usePaperRef, useSettings } from '../docs/Doc';
 
-const TYPE = {
-  WH_PROD: { label: 'Gudang → Produksi', from: 'Gudang', to: 'Produksi' },
-  PROD_DEL: { label: 'Produksi → Delivery', from: 'Produksi', to: 'Delivery' },
-};
+const TYPE = BAST_TYPE;
 
 export function BastList() {
   const { user } = useAuth();
-  const [type, setType] = useState(user.role === 'delivery' ? 'PROD_DEL' : user.role === 'production' || user.role === 'warehouse' ? 'WH_PROD' : '');
+  const [type, setType] = useState(user.role === 'production' ? 'WH_PROD' : '');
   const { data, loading } = useApi(`/bast?type=${type}`);
   const nav = useNavigate();
   return (
@@ -20,10 +17,11 @@ export function BastList() {
       <PageHead title="Berita Acara Serah Terima" sub="Setiap perpindahan barang antar bagian wajib dengan BAST — stok otomatis berpindah.">
         {['production', 'admin'].includes(user.role) && <Link to="/bast/baru?type=WH_PROD" className="btn btn-primary"><Plus size={18} /> BAST Gudang → Produksi</Link>}
         {['delivery', 'admin', 'production'].includes(user.role) && <Link to="/bast/baru?type=PROD_DEL" className={`btn ${user.role === 'delivery' ? 'btn-primary' : 'btn-outline'}`}><Plus size={18} /> BAST Produksi → Delivery</Link>}
+        {['delivery', 'warehouse', 'admin'].includes(user.role) && <Link to="/bast/baru?type=WH_DEL" className="btn btn-outline"><Plus size={18} /> BAST Gudang → Delivery (Box)</Link>}
       </PageHead>
       <div className="card">
         <div className="tabs">
-          {[['', 'Semua'], ['WH_PROD', 'Gudang → Produksi'], ['PROD_DEL', 'Produksi → Delivery']].map(([k, l]) => <button key={k} className={`tab ${type === k ? 'on' : ''}`} onClick={() => setType(k)}>{l}</button>)}
+          {[['', 'Semua'], ['WH_PROD', 'Gudang → Produksi'], ['PROD_DEL', 'Produksi → Delivery'], ['WH_DEL', 'Gudang → Delivery (Box)']].map(([k, l]) => <button key={k} className={`tab ${type === k ? 'on' : ''}`} onClick={() => setType(k)}>{l}</button>)}
         </div>
         {loading ? <Loading /> : !data.length ? <Empty icon={ClipboardCheck} text="Belum ada BAST" /> : (
           <div className="table-wrap">
@@ -33,12 +31,12 @@ export function BastList() {
                 {data.map((b) => (
                   <tr key={b.id} className="clickable" onClick={() => nav(`/bast/${b.id}`)}>
                     <td className="strong">{b.number}</td>
-                    <td><span className={`badge ${b.type === 'WH_PROD' ? 'b-amber' : 'b-blue'}`}>{TYPE[b.type].label}</span></td>
+                    <td><span className={`badge ${TYPE[b.type].badge}`}>{TYPE[b.type].label}</span></td>
                     <td>{b.customer_name}<div className="small muted">{b.po_number}</div></td>
                     <td>{fmtDate(b.bast_date, true)}</td>
                     <td className="num strong">{fmtNum(b.total_qty)}</td>
                     <td className="small">{b.giver_name} → {b.receiver_name}</td>
-                    <td>{b.type === 'PROD_DEL' ? (b.do_id ? <span className="badge b-green">Sudah DO</span> : <span className="badge b-gray">Belum DO</span>) : <span className="muted">-</span>}</td>
+                    <td>{b.type !== 'WH_PROD' ? (b.do_id ? <span className="badge b-green">Sudah DO</span> : <span className="badge b-gray">Belum DO</span>) : <span className="muted">-</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -53,7 +51,8 @@ export function BastList() {
 export function BastForm() {
   const { user } = useAuth();
   const [params] = useSearchParams();
-  const type = params.get('type') === 'PROD_DEL' ? 'PROD_DEL' : 'WH_PROD';
+  const type = ['PROD_DEL', 'WH_DEL'].includes(params.get('type')) ? params.get('type') : 'WH_PROD';
+  const fromWarehouse = type === 'WH_PROD' || type === 'WH_DEL';
   const nav = useNavigate();
   const toast = useToast();
   const { data: pos } = useApi('/po');
@@ -62,8 +61,8 @@ export function BastForm() {
   const [qty, setQty] = useState({});
   const [f, setF] = useState({
     bast_date: todayStr(),
-    giver_name: '',
-    receiver_name: (type === 'WH_PROD' && user.role === 'production') || (type === 'PROD_DEL' && user.role === 'delivery') ? user.name : '',
+    receiver_name: (type === 'WH_PROD' && user.role === 'production') || (type !== 'WH_PROD' && user.role === 'delivery') ? user.name : '',
+    giver_name: type === 'WH_DEL' && user.role === 'warehouse' ? user.name : '',
     notes: '',
   });
   const [err, setErr] = useState('');
@@ -71,15 +70,15 @@ export function BastForm() {
   const [stock, setStock] = useState({});
 
   useEffect(() => {
-    if (type === 'WH_PROD') api('/stock/warehouse').then((list) => setStock(Object.fromEntries(list.map((p) => [p.id, p.stock]))));
+    if (fromWarehouse) api('/stock/warehouse').then((list) => setStock(Object.fromEntries(list.map((p) => [p.id, p.stock]))));
   }, [type]);
   useEffect(() => {
     setPo(null); setQty({});
     if (poId) api(`/po/${poId}`).then(setPo).catch((e) => setErr(e.message));
   }, [poId]);
 
-  const maxFor = (it) => type === 'WH_PROD' ? Math.max(0, Math.min(it.qty - it.qty_produced, stock[it.product_id] ?? 0)) : it.stock_production;
-  const eligible = (pos || []).filter((p) => p.status !== 'batal' && (type === 'WH_PROD' ? p.produced_qty < p.total_qty : ['produksi', 'siap_kirim', 'pengiriman'].includes(p.status)));
+  const maxFor = (it) => fromWarehouse ? Math.max(0, Math.min(it.qty - it.qty_produced, stock[it.product_id] ?? 0)) : it.stock_production;
+  const eligible = (pos || []).filter((p) => p.status !== 'batal' && (fromWarehouse ? p.produced_qty < p.total_qty : ['produksi', 'siap_kirim', 'pengiriman'].includes(p.status)));
 
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setBusy(true);
@@ -94,7 +93,7 @@ export function BastForm() {
   const t = TYPE[type];
   return (
     <form onSubmit={submit}>
-      <PageHead title={`BAST ${t.label}`} sub={type === 'WH_PROD' ? 'Serah terima bahan dari gudang ke produksi. Stok gudang berkurang dan barang jadi bertambah di produksi atas nama PO customer.' : 'Serah terima barang jadi dari produksi ke delivery untuk dikirim ke customer.'} back={{ to: '/bast', label: 'BAST' }} />
+      <PageHead title={`BAST ${t.label}`} sub={{ WH_PROD: 'Serah terima bahan SHEET dari gudang ke produksi. Stok gudang berkurang dan barang jadi bertambah di produksi atas nama PO customer.', PROD_DEL: 'Serah terima barang jadi dari produksi ke delivery untuk dikirim ke customer.', WH_DEL: 'Serah terima BOX langsung dari gudang ke delivery. Stok gudang berkurang dan stok delivery bertambah atas nama PO customer.' }[type]} back={{ to: '/bast', label: 'BAST' }} />
       {err && <div className="err">{err}</div>}
       <div className="grid two" style={{ alignItems: 'start' }}>
         <div className="card">
@@ -131,16 +130,16 @@ export function BastForm() {
           <div className="card-head"><h3>Barang yang Diserahterimakan</h3></div>
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>Barang</th><th>Deskripsi</th><th className="num">Pesanan</th>{type === 'WH_PROD' ? <><th className="num">Sudah diproduksi</th><th className="num">Stok gudang</th></> : <th className="num">Stok di produksi</th>}<th style={{ width: 180 }}>Jumlah diserahkan</th></tr></thead>
+              <thead><tr><th>Barang</th><th>Deskripsi</th><th className="num">Pesanan</th>{fromWarehouse ? <><th className="num">Sudah keluar gudang</th><th className="num">Stok gudang</th></> : <th className="num">Stok di produksi</th>}<th style={{ width: 180 }}>Jumlah diserahkan</th></tr></thead>
               <tbody>
-                {po.items.map((it) => {
+                {po.items.filter((it) => (type === 'WH_PROD' ? it.category !== 'box' : type === 'WH_DEL' ? it.category === 'box' : true)).map((it) => {
                   const max = maxFor(it);
                   return (
                     <tr key={it.id}>
                       <td className="strong">{it.product_code}<div className="small muted">{it.substance}</div></td>
                       <td>{it.description}</td>
                       <td className="num">{fmtNum(it.qty)}</td>
-                      {type === 'WH_PROD' ? <><td className="num">{fmtNum(it.qty_produced)}</td><td className="num">{fmtNum(stock[it.product_id] ?? 0)}</td></> : <td className="num">{fmtNum(it.stock_production)}</td>}
+                      {fromWarehouse ? <><td className="num">{fmtNum(it.qty_produced)}</td><td className="num">{fmtNum(stock[it.product_id] ?? 0)}</td></> : <td className="num">{fmtNum(it.stock_production)}</td>}
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <input className="input input-sm" type="number" min="0" max={max} value={qty[it.id] ?? ''} onChange={(e) => setQty({ ...qty, [it.id]: e.target.value })} disabled={max <= 0} placeholder={max <= 0 ? 'tidak ada' : `maks ${max}`} />
@@ -179,7 +178,7 @@ export function BastDetail() {
     <div>
       <PageHead title={b.number} sub={`BAST ${t.label} · PO ${b.po_number} (${b.customer_name})`} back={{ to: '/bast', label: 'BAST' }}>
         <Link to={`/po/${b.po_id}`} className="btn btn-outline">Lihat PO</Link>
-        {b.type === 'PROD_DEL' && !b.do && ['delivery', 'admin'].includes(user.role) && <Link to={`/do/baru?bast=${b.id}`} className="btn btn-primary"><Truck size={18} /> Buat Delivery Order</Link>}
+        {b.type !== 'WH_PROD' && !b.do && ['delivery', 'admin'].includes(user.role) && <Link to={`/do/baru?bast=${b.id}`} className="btn btn-primary"><Truck size={18} /> Buat Delivery Order</Link>}
         {b.do && <Link to={`/do/${b.do.id}`} className="btn btn-ghost">{b.do.number} <Badge map={DO_STATUS} value={b.do.status} /></Link>}
       </PageHead>
       <DocActions paperRef={paperRef} filename={b.number} title={`BAST ${b.number} — ${b.customer_name}`} />
@@ -196,7 +195,7 @@ export function BastDetail() {
         <table>
           <thead><tr><th className="c" style={{ width: 30 }}>No</th><th>Kode</th><th>Jenis Barang</th><th>Deskripsi</th><th className="r">Jumlah</th></tr></thead>
           <tbody>
-            {b.items.map((i, n) => <tr key={i.id}><td className="c">{n + 1}</td><td>{i.product_code}</td><td>{i.product_name}</td><td>{i.description}</td><td className="r">{fmtNum(i.qty)} {b.type === 'WH_PROD' ? i.unit : 'pcs'}</td></tr>)}
+            {b.items.map((i, n) => <tr key={i.id}><td className="c">{n + 1}</td><td>{i.product_code}</td><td>{i.product_name}</td><td>{i.description}</td><td className="r">{fmtNum(i.qty)} {b.type === 'PROD_DEL' ? 'pcs' : i.unit}</td></tr>)}
             <tr><td colSpan={4} className="r"><b>Total</b></td><td className="r"><b>{fmtNum(total)}</b></td></tr>
           </tbody>
         </table>

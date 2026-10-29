@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Truck, Upload, ReceiptText, CheckCircle2, Send } from 'lucide-react';
-import { api, useApi, useAuth, useToast, fmtNum, fmtDate, fmtDateTime, todayStr, DO_STATUS } from '../lib';
+import { Plus, Truck, Upload, ReceiptText, CheckCircle2, Send, Pencil } from 'lucide-react';
+import { api, useApi, useAuth, useToast, fmtNum, fmtDate, fmtDateTime, todayStr, DO_STATUS, BAST_TYPE } from '../lib';
 import { Badge, Empty, Field, FileDrop, Loading, Modal, PageHead, ScanPreview } from '../components/ui';
-import { DocActions, DocHeader, Paper, Signatures, usePaperRef, useSettings } from '../docs/Doc';
+import { DocActions, Paper, usePaperRef, useSettings } from '../docs/Doc';
+import { SuratJalanDoc, ItemsEditor, BankFields, itemsTotal } from '../docs/Templates';
 
 export function DoList() {
   const { user } = useAuth();
@@ -12,8 +13,8 @@ export function DoList() {
   const nav = useNavigate();
   return (
     <div>
-      <PageHead title="Delivery Order" sub={user.role === 'admin' ? 'DO yang sudah ditandatangani customer dikirim ke sini untuk dibuatkan invoice.' : 'Buat DO dari BAST produksi, cetak, lalu upload DO yang sudah ditandatangani customer.'}>
-        {user.role === 'delivery' && <Link to="/do/baru" className="btn btn-primary"><Plus size={18} /> Buat DO</Link>}
+      <PageHead title="Delivery Order" sub={user.role === 'admin' ? 'Surat Jalan yang sudah ditandatangani customer dikirim ke sini untuk dibuatkan invoice.' : 'Buat Surat Jalan dari BAST, cetak, lalu upload yang sudah ditandatangani customer.'}>
+        {['delivery', 'admin'].includes(user.role) && <Link to="/do/baru" className="btn btn-primary"><Plus size={18} /> Buat DO</Link>}
       </PageHead>
       <div className="card">
         <div className="tabs">
@@ -22,7 +23,7 @@ export function DoList() {
         {loading ? <Loading /> : !data.length ? <Empty icon={Truck} text="Belum ada Delivery Order" /> : (
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>No. DO</th><th>Customer / PO</th><th>Tanggal</th><th className="num">Qty</th><th>Sopir / Kendaraan</th><th>Status</th>{user.role === 'admin' && <th>Invoice</th>}</tr></thead>
+              <thead><tr><th>No. Surat Jalan</th><th>Customer / PO</th><th>Tanggal</th><th className="num">Qty</th><th>Pengantar</th><th>Status</th>{user.role === 'admin' && <th>Invoice</th>}</tr></thead>
               <tbody>
                 {data.map((d) => (
                   <tr key={d.id} className="clickable" onClick={() => nav(`/do/${d.id}`)}>
@@ -44,68 +45,96 @@ export function DoList() {
   );
 }
 
+/** Form Surat Jalan: semua isian bisa diubah manual sebelum dicetak sesuai template */
 export function DoForm() {
+  const { id } = useParams();
+  const editing = Boolean(id);
   const [params] = useSearchParams();
   const nav = useNavigate();
   const toast = useToast();
-  const { data: basts } = useApi('/bast?available_for_do=1');
+  const s = useSettings();
+  const { data: basts } = useApi(editing ? null : '/bast?available_for_do=1');
   const [bastId, setBastId] = useState(params.get('bast') || '');
-  const [bast, setBast] = useState(null);
-  const [f, setF] = useState({ do_date: todayStr(), driver: '', vehicle_no: '', ship_to: '', notes: '' });
+  const [doc, setDoc] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+
   useEffect(() => {
-    setBast(null);
-    if (bastId) api(`/bast/${bastId}`).then((b) => { setBast(b); setF((x) => ({ ...x, ship_to: b.customer_address || '' })); });
-  }, [bastId]);
+    if (editing) {
+      api(`/do/${id}`).then((d) => { setDoc(d.doc); setBastId(String(d.bast_id)); }).catch((e) => setErr(e.message));
+      return;
+    }
+    setDoc(null);
+    if (bastId) api(`/do/draft?bast_id=${bastId}`).then(setDoc).catch((e) => setErr(e.message));
+  }, [bastId, id, editing]);
+
+  const set = (patch) => setDoc((d) => ({ ...d, ...patch }));
   const submit = async (e) => {
     e.preventDefault(); setErr(''); setBusy(true);
     try {
-      const r = await api('/do', { method: 'POST', body: { bast_id: Number(bastId), ...f } });
-      toast('Delivery Order dibuat');
-      nav(`/do/${r.id}`);
-    } catch (e2) { setErr(e2.message); } finally { setBusy(false); }
+      if (editing) { await api(`/do/${id}`, { method: 'PUT', body: { doc } }); toast('Surat Jalan diperbarui'); nav(`/do/${id}`); }
+      else { const r = await api('/do', { method: 'POST', body: { bast_id: Number(bastId), doc } }); toast('Delivery Order dibuat'); nav(`/do/${r.id}`); }
+    } catch (e2) { setErr(e2.message); window.scrollTo(0, 0); } finally { setBusy(false); }
   };
+
   return (
     <form onSubmit={submit}>
-      <PageHead title="Buat Delivery Order" sub="DO dibuat dari BAST serah terima Produksi → Delivery." back={{ to: '/do', label: 'Delivery Order' }} />
+      <PageHead title={editing ? 'Edit Surat Jalan' : 'Buat Delivery Order'} sub="Data terisi otomatis dari BAST — semua isian dapat diubah manual. Pratinjau di bawah mengikuti template cetak." back={{ to: editing ? `/do/${id}` : '/do', label: 'Kembali' }} />
       {err && <div className="err">{err}</div>}
-      <div className="grid two" style={{ alignItems: 'start' }}>
-        <div className="card">
-          <div className="card-head"><h3>Data Pengiriman</h3></div>
-          <div className="form-grid">
-            <Field label="BAST Produksi → Delivery *" full>
-              <select className="input" value={bastId} onChange={(e) => setBastId(e.target.value)} required>
-                <option value="">— pilih BAST —</option>
-                {(basts || []).map((b) => <option key={b.id} value={b.id}>{b.number} — {b.customer_name} ({fmtNum(b.total_qty)} pcs)</option>)}
-                {bast && !(basts || []).some((b) => b.id === bast.id) && <option value={bast.id}>{bast.number}</option>}
-              </select>
-            </Field>
-            <Field label="Tanggal DO"><input className="input" type="date" value={f.do_date} onChange={(e) => setF({ ...f, do_date: e.target.value })} /></Field>
-            <Field label="Nama Sopir"><input className="input" value={f.driver} onChange={(e) => setF({ ...f, driver: e.target.value })} /></Field>
-            <Field label="No. Kendaraan"><input className="input" value={f.vehicle_no} onChange={(e) => setF({ ...f, vehicle_no: e.target.value })} placeholder="B 1234 XYZ" /></Field>
-            <div />
-            <Field label="Alamat Kirim" full><textarea className="input" rows={2} value={f.ship_to} onChange={(e) => setF({ ...f, ship_to: e.target.value })} /></Field>
-            <Field label="Catatan" full><textarea className="input" rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
+      {!editing && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <Field label="BAST serah terima ke Delivery *">
+            <select className="input" value={bastId} onChange={(e) => setBastId(e.target.value)} required>
+              <option value="">— pilih BAST —</option>
+              {(basts || []).map((b) => <option key={b.id} value={b.id}>{b.number} · {BAST_TYPE[b.type]?.label} — {b.customer_name} ({fmtNum(b.total_qty)} pcs)</option>)}
+            </select>
+          </Field>
+          {basts && !basts.length && <p className="small muted" style={{ marginBottom: 0 }}>Tidak ada BAST yang belum dibuatkan DO. Buat BAST Produksi → Delivery (sheet) atau Gudang → Delivery (box) terlebih dahulu.</p>}
+        </div>
+      )}
+
+      {doc && (
+        <>
+          <div className="grid two" style={{ alignItems: 'start' }}>
+            <div className="card">
+              <div className="card-head"><h3>Data Surat Jalan</h3></div>
+              <div className="form-grid">
+                <Field label="No. Order / Surat Jalan"><input className="input" value={doc.number} onChange={(e) => set({ number: e.target.value })} /></Field>
+                <Field label="Tanggal"><input className="input" type="date" value={doc.date} onChange={(e) => set({ date: e.target.value })} /></Field>
+                <Field label="Kota"><input className="input" value={doc.city} onChange={(e) => set({ city: e.target.value })} /></Field>
+                <Field label="Pengantar / Sopir"><input className="input" value={doc.driver} onChange={(e) => set({ driver: e.target.value })} /></Field>
+                <Field label="No. Kendaraan"><input className="input" value={doc.vehicle_no} onChange={(e) => set({ vehicle_no: e.target.value })} placeholder="opsional" /></Field>
+                <Field label="Tampilkan harga"><select className="input" value={doc.show_price === false ? '0' : '1'} onChange={(e) => set({ show_price: e.target.value === '1' })}><option value="1">Ya (seperti template)</option><option value="0">Tidak</option></select></Field>
+                <Field label="TTD Gudang (nama)"><input className="input" value={doc.sign_gudang} onChange={(e) => set({ sign_gudang: e.target.value })} /></Field>
+                <Field label="TTD Admin (nama)"><input className="input" value={doc.sign_admin} onChange={(e) => set({ sign_admin: e.target.value })} /></Field>
+                <Field label="Catatan" full><input className="input" value={doc.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="opsional" /></Field>
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-head"><h3>Kepada</h3></div>
+              <div className="form-grid">
+                <Field label="Nama Customer *" full><input className="input" value={doc.customer_name} onChange={(e) => set({ customer_name: e.target.value })} required /></Field>
+                <Field label="Up. (nama penerima)" full><input className="input" value={doc.attn} onChange={(e) => set({ attn: e.target.value })} placeholder="mis. Ibu Yulian Wahyu, SH" /></Field>
+                <Field label="Alamat" full><textarea className="input" rows={2} value={doc.address} onChange={(e) => set({ address: e.target.value })} /></Field>
+              </div>
+              <div className="card-head" style={{ marginTop: 16 }}><h3>Pembayaran (Transfer)</h3></div>
+              <BankFields bank={doc.bank} accounts={s.bank_accounts || []} onChange={(bank) => set({ bank })} />
+            </div>
           </div>
-        </div>
-        <div className="card">
-          <div className="card-head"><h3>Barang Dikirim</h3></div>
-          {!bast ? <Empty text={basts && !basts.length ? 'Tidak ada BAST yang belum dibuatkan DO' : 'Pilih BAST terlebih dahulu'} /> : (
-            <>
-              <dl className="kv" style={{ marginBottom: 14 }}><dt>Customer</dt><dd>{bast.customer_name}</dd><dt>No. PO</dt><dd>{bast.po_number}</dd></dl>
-              <table className="tbl">
-                <thead><tr><th>Barang</th><th className="num">Qty</th></tr></thead>
-                <tbody>{bast.items.map((i) => <tr key={i.id}><td>{i.description}<div className="small muted">{i.product_code}</div></td><td className="num strong">{fmtNum(i.qty)}</td></tr>)}</tbody>
-              </table>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="form-actions">
-        <button type="button" className="btn btn-ghost" onClick={() => nav(-1)}>Batal</button>
-        <button className="btn btn-primary" disabled={busy || !bast}>{busy ? 'Menyimpan…' : 'Buat DO'}</button>
-      </div>
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="card-head"><h3>Barang</h3><span className="muted">Total: <b style={{ color: 'var(--ink)' }}>{fmtNum(itemsTotal(doc.items))}</b></span></div>
+            <ItemsEditor items={doc.items} onChange={(items) => set({ items })} />
+          </div>
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="card-head"><h3>Pratinjau Template</h3></div>
+            <div className="preview-box"><Paper><SuratJalanDoc doc={doc} s={s} /></Paper></div>
+          </div>
+          <div className="form-actions">
+            <button type="button" className="btn btn-ghost" onClick={() => nav(-1)}>Batal</button>
+            <button className="btn btn-primary" disabled={busy}>{busy ? 'Menyimpan…' : editing ? 'Simpan Perubahan' : 'Buat Surat Jalan'}</button>
+          </div>
+        </>
+      )}
     </form>
   );
 }
@@ -120,14 +149,14 @@ export function DoDetail() {
   const s = useSettings();
   const paperRef = usePaperRef();
   if (loading || !d) return <Loading />;
-  const total = d.items.reduce((a, i) => a + i.qty, 0);
   const canDelivery = ['delivery', 'admin'].includes(user.role);
   const act = async (path, msg) => { try { await api(path, { method: 'POST' }); toast(msg); reload(); } catch (e) { toast(e.message, 'error'); } };
 
   return (
     <div>
-      <PageHead title={d.number} sub={`${d.customer_name} · PO ${d.po_number}`} back={{ to: user.role === 'admin' || user.role === 'delivery' ? '/do' : '/', label: 'Delivery Order' }}>
+      <PageHead title={d.number} sub={`Surat Jalan · ${d.customer_name} · PO ${d.po_number}`} back={{ to: canDelivery ? '/do' : '/', label: 'Delivery Order' }}>
         <Badge map={DO_STATUS} value={d.status} />
+        {canDelivery && !d.invoice && <Link className="btn btn-ghost" to={`/do/${d.id}/edit`}><Pencil size={16} /> Edit Isi</Link>}
         {canDelivery && d.status === 'dibuat' && <button className="btn btn-outline" onClick={() => act(`/do/${d.id}/ship`, 'DO ditandai dalam pengiriman')}><Send size={16} /> Tandai Dikirim</button>}
         {canDelivery && d.status !== 'ditandatangani' && <button className="btn btn-primary" onClick={() => setUploadOpen(true)}><Upload size={18} /> Upload DO Bertanda Tangan</button>}
         {user.role === 'admin' && d.status === 'ditandatangani' && !d.admin_received_at && <button className="btn btn-outline" onClick={() => act(`/do/${d.id}/receive`, 'DO diterima admin')}><CheckCircle2 size={16} /> Tandai Diterima</button>}
@@ -140,30 +169,14 @@ export function DoDetail() {
       )}
 
       <div className="tabs">
-        <button className={`tab ${tab === 'doc' ? 'on' : ''}`} onClick={() => setTab('doc')}>Dokumen DO</button>
-        <button className={`tab ${tab === 'scan' ? 'on' : ''}`} onClick={() => setTab('scan')}>Scan DO Bertanda Tangan {d.signed_file_id ? '✓' : ''}</button>
+        <button className={`tab ${tab === 'doc' ? 'on' : ''}`} onClick={() => setTab('doc')}>Surat Jalan</button>
+        <button className={`tab ${tab === 'scan' ? 'on' : ''}`} onClick={() => setTab('scan')}>Scan Bertanda Tangan {d.signed_file_id ? '✓' : ''}</button>
       </div>
 
       {tab === 'doc' && (
         <>
-          <DocActions paperRef={paperRef} filename={d.number} title={`Delivery Order ${d.number} — ${d.customer_name}`} />
-          <Paper paperRef={paperRef}>
-            <DocHeader s={s} title="DELIVERY ORDER" number={d.number} date={fmtDate(d.do_date)} />
-            <div className="meta">
-              <div className="box"><div className="h">Kirim Kepada</div><b>{d.customer_name}</b><div>{d.ship_to || d.customer_address}</div><div>{d.customer_phone}</div></div>
-              <div className="box"><div className="h">Referensi</div><div>No. PO: <b>{d.po_number}</b></div><div>No. BAST: {d.bast_number}</div><div>Sopir: {d.driver || '-'} · Kendaraan: {d.vehicle_no || '-'}</div></div>
-            </div>
-            <table>
-              <thead><tr><th className="c" style={{ width: 30 }}>No</th><th>Nama Barang</th><th>Jenis</th><th className="r">Jumlah</th><th>Keterangan</th></tr></thead>
-              <tbody>
-                {d.items.map((i, n) => <tr key={i.id}><td className="c">{n + 1}</td><td>{i.description}</td><td>{i.product_code}</td><td className="r">{fmtNum(i.qty)} pcs</td><td></td></tr>)}
-                <tr><td colSpan={3} className="r"><b>Total</b></td><td className="r"><b>{fmtNum(total)} pcs</b></td><td></td></tr>
-              </tbody>
-            </table>
-            {d.notes && <p className="note"><b>Catatan:</b> {d.notes}</p>}
-            <p className="note">Barang telah diterima dalam keadaan baik dan jumlah sesuai. Mohon DO ini ditandatangani dan distempel oleh penerima.</p>
-            <Signatures items={[['Hormat kami (Admin)', ''], ['Pengirim / Sopir', d.driver], ['Diterima oleh (Customer)', d.received_by_customer]]} />
-          </Paper>
+          <DocActions paperRef={paperRef} filename={`Surat Jalan ${d.number}`} title={`Surat Jalan ${d.number} — ${d.customer_name}`} />
+          <Paper paperRef={paperRef}><SuratJalanDoc doc={d.doc} s={s} /></Paper>
         </>
       )}
       {tab === 'scan' && (
@@ -173,7 +186,7 @@ export function DoDetail() {
               <ScanPreview fileId={d.signed_file_id} mime={d.signed_file_mime} name={d.signed_file_name} />
               {canDelivery && <button className="btn btn-ghost btn-sm" style={{ marginTop: 10, background: '#f2f4f3' }} onClick={() => setUploadOpen(true)}>Ganti file scan</button>}
             </>
-          ) : <Empty icon={Upload} text="DO bertanda tangan belum diupload">{canDelivery && <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={() => setUploadOpen(true)}>Upload sekarang</button>}</Empty>}
+          ) : <Empty icon={Upload} text="Surat Jalan bertanda tangan belum diupload">{canDelivery && <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={() => setUploadOpen(true)}>Upload sekarang</button>}</Empty>}
         </div>
       )}
       {uploadOpen && <SignedUpload d={d} onClose={(ok) => { setUploadOpen(false); if (ok) { reload(); setTab('scan'); } }} />}
@@ -189,7 +202,7 @@ function SignedUpload({ d, onClose }) {
   const [busy, setBusy] = useState(false);
   const submit = async (e) => {
     e.preventDefault();
-    if (!file) return setErr('Pilih file scan / foto DO');
+    if (!file) return setErr('Pilih file scan / foto Surat Jalan');
     setBusy(true); setErr('');
     try {
       const fd = new FormData();
@@ -202,10 +215,10 @@ function SignedUpload({ d, onClose }) {
     } catch (e2) { setErr(e2.message); } finally { setBusy(false); }
   };
   return (
-    <Modal title="Upload DO Bertanda Tangan" sub="Foto / scan DO yang sudah ditandatangani customer. Stok delivery otomatis berpindah ke 'Terkirim' dan admin mendapat notifikasi." onClose={() => onClose(false)}>
+    <Modal title="Upload Surat Jalan Bertanda Tangan" sub="Foto / scan yang sudah ditandatangani customer. Stok delivery otomatis berpindah ke 'Terkirim' dan admin mendapat notifikasi. Foto akan dilampirkan pada invoice." onClose={() => onClose(false)}>
       <form onSubmit={submit}>
         {err && <div className="err">{err}</div>}
-        <FileDrop file={file} onChange={setFile} label="Upload scan / foto DO bertanda tangan" />
+        <FileDrop file={file} onChange={setFile} label="Upload scan / foto Surat Jalan bertanda tangan" />
         {d.status !== 'ditandatangani' && (
           <div className="form-grid" style={{ marginTop: 14 }}>
             <Field label="Nama penerima di customer"><input className="input" value={f.received_by_customer} onChange={(e) => setF({ ...f, received_by_customer: e.target.value })} /></Field>

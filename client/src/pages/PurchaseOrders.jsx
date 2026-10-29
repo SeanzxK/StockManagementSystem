@@ -98,7 +98,7 @@ export function PoForm() {
 
   const groups = useMemo(() => {
     const g = {};
-    (products || []).filter((p) => p.active).forEach((p) => { (g[p.flute] = g[p.flute] || []).push(p); });
+    (products || []).filter((p) => p.active).forEach((p) => { const k = `${p.category === 'box' ? 'BOX' : 'SHEET'} · Flute ${p.flute}`; (g[k] = g[k] || []).push(p); });
     return g;
   }, [products]);
 
@@ -148,12 +148,12 @@ export function PoForm() {
                       <select className="input input-sm" value={it.product_id} onChange={(e) => setItem(i, 'product_id', e.target.value)} required disabled={locked}>
                         <option value="">— pilih —</option>
                         {Object.entries(groups).map(([fl, list]) => (
-                          <optgroup key={fl} label={`Flute ${fl}`}>
+                          <optgroup key={fl} label={fl}>
                             {list.map((pp) => <option key={pp.id} value={pp.id}>{pp.code} · {pp.substance} (stok {fmtNum(pp.stock)})</option>)}
                           </optgroup>
                         ))}
                       </select>
-                      {p && <div className="small muted" style={{ marginTop: 4 }}>{fmtRp(p.price_m2)}/m² · stok gudang {fmtNum(p.stock)} {p.unit}</div>}
+                      {p && <div className="small muted" style={{ marginTop: 4 }}><span className={`badge ${p.category === 'box' ? 'b-green' : 'b-amber'}`}>{p.category === 'box' ? 'Box → Delivery' : 'Sheet → Produksi'}</span> {fmtRp(p.price_m2)}/m² · stok {fmtNum(p.stock)} {p.unit}</div>}
                     </td>
                     <td><input className="input input-sm" value={it.description} onChange={(e) => setItem(i, 'description', e.target.value)} required disabled={locked} placeholder="Box 40×30×20 cm, cap logo customer" /></td>
                     <td><input className="input input-sm" type="number" min="1" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} required disabled={locked} /></td>
@@ -201,13 +201,15 @@ export function PoDetail() {
     if (!window.confirm('Batalkan PO ini?')) return;
     try { await api(`/po/${id}/cancel`, { method: 'POST' }); toast('PO dibatalkan'); reload(); } catch (e) { toast(e.message, 'error'); }
   };
-  const canWHPROD = ['production', 'admin'].includes(user.role) && po.items.some((i) => i.qty > i.qty_produced) && po.status !== 'batal';
+  const canWHPROD = ['production', 'admin'].includes(user.role) && po.items.some((i) => i.category !== 'box' && i.qty > i.qty_produced) && po.status !== 'batal';
+  const canWHDEL = ['delivery', 'warehouse', 'admin'].includes(user.role) && po.items.some((i) => i.category === 'box' && i.qty > i.qty_produced) && po.status !== 'batal';
   const canPRODDEL = ['delivery', 'production', 'admin'].includes(user.role) && po.items.some((i) => i.stock_production > 0);
 
   return (
     <div>
       <PageHead title={po.po_number} sub={`${po.customer_name} · PO tanggal ${fmtDate(po.po_date)}`} back={{ to: '/po', label: 'Purchase Order' }}>
         {canWHPROD && <Link className="btn btn-primary" to={`/bast/baru?type=WH_PROD&po=${po.id}`}><ClipboardCheck size={18} /> BAST Gudang → Produksi</Link>}
+        {canWHDEL && <Link className="btn btn-primary" to={`/bast/baru?type=WH_DEL&po=${po.id}`}><ClipboardCheck size={18} /> BAST Gudang → Delivery (Box)</Link>}
         {canPRODDEL && <Link className="btn btn-primary" to={`/bast/baru?type=PROD_DEL&po=${po.id}`}><ClipboardCheck size={18} /> BAST Produksi → Delivery</Link>}
         {user.role === 'admin' && po.status !== 'batal' && <Link className="btn btn-outline" to={`/po/${po.id}/edit`}><Pencil size={16} /> Edit</Link>}
         {user.role === 'admin' && po.status === 'baru' && <button className="btn btn-danger" onClick={cancel}><XCircle size={16} /> Batalkan</button>}
@@ -272,11 +274,11 @@ export function PoDetail() {
             <div className="card-head"><h3>Item & Progress</h3></div>
             <div className="table-wrap">
               <table className="tbl">
-                <thead><tr><th>Barang</th><th>Deskripsi</th><th className="num">Pesanan</th><th className="num">Diproduksi</th><th className="num">Di Produksi</th><th className="num">Di Delivery</th><th className="num">Terkirim</th><th style={{ minWidth: 120 }}>Progress</th></tr></thead>
+                <thead><tr><th>Barang</th><th>Deskripsi</th><th className="num">Pesanan</th><th className="num">Keluar Gudang</th><th className="num">Di Produksi</th><th className="num">Di Delivery</th><th className="num">Terkirim</th><th style={{ minWidth: 120 }}>Progress</th></tr></thead>
                 <tbody>
                   {po.items.map((i) => (
                     <tr key={i.id}>
-                      <td><b>{i.product_code}</b><div className="small muted">{i.substance}</div></td>
+                      <td><b>{i.product_code}</b> <span className={`badge ${i.category === 'box' ? 'b-green' : 'b-amber'}`}>{i.category === 'box' ? 'Box' : 'Sheet'}</span><div className="small muted">{i.substance}</div></td>
                       <td>{i.description}{i.sheet_length ? <div className="small muted">Lembar {i.sheet_length}×{i.sheet_width} mm</div> : null}</td>
                       <td className="num strong">{fmtNum(i.qty)}</td>
                       <td className="num">{fmtNum(i.qty_produced)}</td>

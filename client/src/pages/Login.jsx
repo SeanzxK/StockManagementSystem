@@ -18,11 +18,10 @@ export default function Login() {
     <div className="login-wrap">
       <section className="login-art">
         <div className="brand" style={{ padding: 0 }}>
-          <div className="brand-logo" style={{ borderColor: '#fff', color: '#fff' }}><Boxes size={20} /></div>
-          <div><div className="brand-name">StockKarton</div><div className="brand-sub" style={{ color: 'rgba(255,255,255,.7)' }}>Inventory Stock Management System</div></div>
+          <div style={{ background: '#fff', borderRadius: 14, padding: '8px 12px' }}><img src="/logo-jps.png" alt="PT Jitu Persada Sinergi" style={{ height: 40, display: 'block' }} /></div>
         </div>
         <h1>Pantau stok karton dari gudang sampai ke customer.</h1>
-        <p>PO, BAST, Delivery Order dan Invoice dalam satu alur — setiap perpindahan barang tercatat otomatis.</p>
+        <p>Inventory Stock Management System PT Jitu Persada Sinergi — PO, BAST, Surat Jalan dan Invoice dalam satu alur, setiap perpindahan barang tercatat otomatis.</p>
         <div className="login-roles">
           <div><b>Admin</b>Monitoring stok, PO & invoice</div>
           <div><b>Gudang</b>Barang masuk & keluar</div>
@@ -32,7 +31,7 @@ export default function Login() {
       </section>
       <section className="login-form">
         <form className="login-box" onSubmit={submit}>
-          <div className="brand-logo"><Boxes size={20} /></div>
+          <img src="/logo-jps.png" alt="PT Jitu Persada Sinergi" style={{ height: 48 }} />
           <h2>Masuk ke akun</h2>
           <p>Gunakan akun sesuai bagian Anda di pabrik.</p>
           {err && <div className="err">{err}</div>}

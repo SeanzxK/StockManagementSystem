@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowDownToLine, ArrowUpFromLine, Download, Warehouse, History, Factory, Truck } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Download, Warehouse, History, Factory, Truck, Layers, Package } from 'lucide-react';
 import { api, useApi, useAuth, useToast, fmtNum, fmtRp, fmtDate, fmtDateTime, todayStr, LOC_LABEL, REF_LABEL } from '../lib';
 import { Empty, Field, Loading, Modal, PageHead } from '../components/ui';
 
@@ -18,14 +18,15 @@ export function StockWarehouse() {
   const [params, setParams] = useSearchParams();
   const { data, loading, reload } = useApi('/stock/warehouse');
   const [flute, setFlute] = useState('');
+  const [cat, setCat] = useState(params.get('cat') || 'sheet');
   const [q, setQ] = useState(params.get('q') || '');
   const [onlyStock, setOnlyStock] = useState(false);
   const [modal, setModal] = useState(params.get('aksi') ? { dir: params.get('aksi') } : null);
   const canEdit = ['warehouse', 'admin'].includes(user.role);
 
-  const rows = useMemo(() => (data || []).filter((p) =>
+  const rows = useMemo(() => (data || []).filter((p) => p.category === cat &&
     (!flute || p.flute === flute) && (!onlyStock || p.stock > 0) &&
-    (!q || `${p.code} ${p.name} ${p.substance}`.toLowerCase().includes(q.toLowerCase()))), [data, flute, q, onlyStock]);
+    (!q || `${p.code} ${p.name} ${p.substance}`.toLowerCase().includes(q.toLowerCase()))), [data, flute, q, onlyStock, cat]);
   const total = rows.reduce((a, p) => a + p.stock, 0);
 
   const closeModal = (changed) => { setModal(null); setParams({}); if (changed) reload(); };
@@ -39,6 +40,13 @@ export function StockWarehouse() {
         </>}
       </PageHead>
       <div className="card">
+        <div className="toolbar">
+          <div className="cat-switch">
+            <button className={cat === 'sheet' ? 'on' : ''} onClick={() => setCat('sheet')}><Layers size={16} /> Sheet</button>
+            <button className={cat === 'box' ? 'on' : ''} onClick={() => setCat('box')}><Package size={16} /> Box</button>
+          </div>
+          <span className="small muted">{cat === 'box' ? 'Box: dari Gudang langsung ke Delivery' : 'Sheet: dari Gudang ke Produksi'}</span>
+        </div>
         <div className="tabs">
           {[['', 'Semua'], ['B', 'Flute B'], ['C', 'Flute C'], ['CB', 'Flute CB (Double Wall)']].map(([k, l]) => <button key={k} className={`tab ${flute === k ? 'on' : ''}`} onClick={() => setFlute(k)}>{l}</button>)}
         </div>
@@ -46,8 +54,8 @@ export function StockWarehouse() {
           <input className="input search-input" placeholder="Cari kode / substance (mis. K150)…" value={q} onChange={(e) => setQ(e.target.value)} />
           <label className="small" style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={onlyStock} onChange={(e) => setOnlyStock(e.target.checked)} /> Hanya yang ada stok</label>
           <div className="spacer" />
-          <span className="muted small">Total: <b className="mono" style={{ color: 'var(--ink)' }}>{fmtNum(total)}</b> lembar</span>
-          <button className="btn btn-ghost btn-sm" style={{ background: '#f2f4f3' }} onClick={() => downloadCsv(`stok-gudang-${todayStr()}.csv`, [['Kode', 'Nama', 'Flute', 'Substance', 'Harga/m2', 'Stok', 'Satuan'], ...rows.map((p) => [p.code, p.name, p.flute, p.substance, p.price_m2, p.stock, p.unit])])}><Download size={15} /> CSV</button>
+          <span className="muted small">Total: <b className="mono" style={{ color: 'var(--ink)' }}>{fmtNum(total)}</b> {cat === 'box' ? 'pcs' : 'lembar'}</span>
+          <button className="btn btn-ghost btn-sm" style={{ background: '#f2f4f3' }} onClick={() => downloadCsv(`stok-gudang-${cat}-${todayStr()}.csv`, [['Kode', 'Nama', 'Flute', 'Substance', 'Harga/m2', 'Stok', 'Satuan'], ...rows.map((p) => [p.code, p.name, p.flute, p.substance, p.price_m2, p.stock, p.unit])])}><Download size={15} /> CSV</button>
         </div>
         {loading ? <Loading /> : !rows.length ? <Empty icon={Warehouse} text="Tidak ada barang" /> : (
           <div className="table-wrap">
@@ -103,7 +111,11 @@ function MoveModal({ dir, productId, products, onClose }) {
           <Field label="Jenis barang *" full>
             <select className="input" value={f.product_id} onChange={(e) => setF({ ...f, product_id: e.target.value })} required>
               <option value="">— pilih barang —</option>
-              {products.filter((x) => x.active).map((x) => <option key={x.id} value={x.id}>{x.code} · {x.substance} — stok {fmtNum(x.stock)}</option>)}
+              {['sheet', 'box'].map((c) => (
+                <optgroup key={c} label={c === 'box' ? 'BOX' : 'SHEET'}>
+                  {products.filter((x) => x.active && x.category === c).map((x) => <option key={x.id} value={x.id}>{x.code} · {x.substance} — stok {fmtNum(x.stock)}</option>)}
+                </optgroup>
+              ))}
             </select>
           </Field>
           <Field label="Jumlah *" hint={p ? `Stok saat ini ${fmtNum(p.stock)} ${p.unit}` : ''}><input className="input" type="number" min="1" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} required /></Field>
